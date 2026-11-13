@@ -51,8 +51,26 @@ const ORIGINAL_MAX_DIM = 2000;
 // it appears everywhere the photo is shown (home, matches/listing, profile
 // details, gallery, lightbox) and can't be removed via devtools or by opening
 // the raw file URL. Opacity 0.2 per requirement.
-const WATERMARK_TEXT    = 'verified profile · telugusambandham.com';
+const WATERMARK_TEXT    = 'Verified Profile on TeluguSambandham.com';
 const WATERMARK_OPACITY = 0.2;
+
+// ── Embedded watermark font (fixes the ".notdef box per character" bug) ───────
+// The backend Docker image is node:22-alpine and ships NO fonts, so the SVG
+// font-family list resolved to nothing and librsvg drew a tofu box per glyph.
+// To make rendering independent of any OS-installed font / fontconfig, we embed
+// a real bold TTF directly into the SVG via an @font-face base64 data URI. The
+// file is read + base64-encoded ONCE at module load (not per image). __dirname
+// keeps the path correct regardless of the process cwd.
+const WM_FONT_PATH = path.join(__dirname, '..', 'assets', 'fonts', 'DejaVuSans-Bold.ttf');
+let WM_FONT_DATA_URI = '';
+try {
+  const fontBuf = fs.readFileSync(WM_FONT_PATH);
+  WM_FONT_DATA_URI = `data:font/ttf;base64,${fontBuf.toString('base64')}`;
+} catch (err) {
+  // If the font can't be read we fall back to the OS font list below; log once
+  // so the cause of any boxed watermark is discoverable.
+  console.error(`Watermark font not loaded (${WM_FONT_PATH}): ${err.message}`);
+}
 
 // Escape text for safe embedding inside the SVG overlay.
 const escapeXml = (s) => s.replace(/[<>&'"]/g, (c) => (
@@ -64,11 +82,16 @@ const escapeXml = (s) => s.replace(/[<>&'"]/g, (c) => (
 const buildWatermarkSvg = (width, height) => {
   const fontSize = Math.max(14, Math.round(width / 22)); // scales with image
   const text = escapeXml(WATERMARK_TEXT);
+  const fontFace = WM_FONT_DATA_URI
+    ? `@font-face { font-family: 'WMFont'; font-weight: 700;
+                   src: url(${WM_FONT_DATA_URI}) format('truetype'); }`
+    : '';
   return Buffer.from(
     `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
        <style>
+         ${fontFace}
          .wm { fill: #ffffff; fill-opacity: ${WATERMARK_OPACITY};
-               font-family: 'DejaVu Sans', 'Noto Sans', Arial, Helvetica, sans-serif; font-weight: 700;
+               font-family: 'WMFont', 'DejaVu Sans', 'Noto Sans', Arial, Helvetica, sans-serif; font-weight: 700;
                font-size: ${fontSize}px; paint-order: stroke;
                stroke: #000000; stroke-opacity: ${WATERMARK_OPACITY * 0.5};
                stroke-width: 1px; }

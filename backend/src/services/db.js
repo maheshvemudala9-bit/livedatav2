@@ -27,8 +27,10 @@ const register = async (dataToSave) => {
 async function ValidateUser(dataToSave) {
   const client1 = await pool.connect();
   try {
+    // Email is compared case-insensitively (lower both sides) so a mixed-case
+    // duplicate email is still detected. Phone comparison is unchanged.
     const query = {
-      text: 'select * from users WHERE uemail = $1 OR uphone = $2',
+      text: 'select * from users WHERE LOWER(uemail) = LOWER($1) OR uphone = $2',
       values: [dataToSave.uemail, dataToSave.uphone],
     };
     const res = await client1.query(query);
@@ -46,7 +48,9 @@ async function saveObjectsToDatabase(obj) {
   const client = await pool.connect();
   try {
     const query = 'INSERT INTO users (relation, ucreated, ufname, ulname, udob, utob, ugender,  upob, upresentloc, uphone, uheight, ucaste, uemail, upassword, ujob, upackage,ucountry,ustate) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,$17,$18)  RETURNING uid  ';
-    const values = [obj.relation, obj.ucreated, obj.ufname, obj.ulname, obj.udob, obj.utob, obj.ugender, obj.upob, obj.upresentloc, obj.uphone, obj.uheight, obj.ucaste, obj.uemail, obj.upassword, obj.ujob, obj.upackage, obj.ucountry, obj.ustate];
+    // Store email lowercased so new rows are canonical (case-insensitive).
+    const normalizedEmail = String(obj.uemail || '').trim().toLowerCase();
+    const values = [obj.relation, obj.ucreated, obj.ufname, obj.ulname, obj.udob, obj.utob, obj.ugender, obj.upob, obj.upresentloc, obj.uphone, obj.uheight, obj.ucaste, normalizedEmail, obj.upassword, obj.ujob, obj.upackage, obj.ucountry, obj.ustate];
     const result = await client.query(query, values);
     const newUid = result.rows[0].uid;
 
@@ -152,9 +156,11 @@ const GetUserDetails = async (data) => {
       uidCandidate = parseInt(raw, 10);
     }
 
+    // Email is matched case-insensitively (lower both sides) so pre-existing
+    // mixed-case rows still match; phone/uid matching stays on the raw value.
     const query = {
       text: `SELECT * FROM users
-               WHERE uemail = $1
+               WHERE LOWER(uemail) = LOWER($1)
                   OR uphone = $1
                   OR ($2::int IS NOT NULL AND uid = $2::int)`,
       values: [raw, Number.isFinite(uidCandidate) ? uidCandidate : null],
@@ -712,6 +718,8 @@ const getPublicProfile = async (uid) => {  //added this public funtion 1
 const saveOtp = async (email, otp) => {
   const client = await pool.connect();
   try {
+    // Normalize email so the send key matches the verify key (case-insensitive).
+    email = String(email || '').trim().toLowerCase();
     // Store OTP with 10 minute expiry
     await client.query(
       `INSERT INTO email_otps (email, otp, expires_at)
@@ -733,6 +741,8 @@ const saveOtp = async (email, otp) => {
 const verifyOtp = async (email, otp) => {
   const client = await pool.connect();
   try {
+    // Normalize email so verify uses the same key as saveOtp (case-insensitive).
+    email = String(email || '').trim().toLowerCase();
     const result = await client.query(
       `SELECT * FROM email_otps
        WHERE email = $1 AND otp = $2
@@ -816,8 +826,10 @@ const closeAccount = async (uid) => {
 const updatePasswordByEmail = async (email, newEncryptedPassword) => {
   const client = await pool.connect();
   try {
+    // Lower both sides so pre-existing mixed-case rows still match.
+    email = String(email || '').trim().toLowerCase();
     const result = await client.query(
-      `UPDATE users SET upassword = $1 WHERE uemail = $2 RETURNING uid`,
+      `UPDATE users SET upassword = $1 WHERE LOWER(uemail) = $2 RETURNING uid`,
       [newEncryptedPassword, email]
     );
     return result.rowCount > 0;

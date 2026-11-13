@@ -13,7 +13,21 @@
 // Prereq: migration 005 (adds usergallery.watermarked) must be applied first.
 //
 // Usage (from backend/):
-//   node scripts/watermarkExisting.js
+//   node scripts/watermarkExisting.js            # default: skip rows already watermarked
+//   node scripts/watermarkExisting.js --force    # re-process ALL rows (see below)
+//   FORCE=1 node scripts/watermarkExisting.js     # same as --force
+//
+// --force / FORCE=1 — WHY IT EXISTS:
+// The watermark TEXT + embedded font were fixed in imageService.js. Rows already
+// marked watermarked=true hold the OLD boxed watermark, and default mode skips
+// them, so they would keep the broken watermark forever. --force ignores the
+// watermarked flag and re-bakes the corrected TEXT watermark into every row,
+// setting watermarked=true afterward. Default (no flag) behavior is unchanged.
+//
+// CAVEAT (unavoidable): re-watermarking composites the corrected watermark OVER
+// files that ALREADY contain the old boxed watermark. The un-watermarked source
+// is not retained, so the old faint boxes may remain underneath at 0.2 opacity —
+// a perfectly clean re-bake from a pristine source is not possible here.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const path = require('path');
@@ -48,14 +62,23 @@ async function watermarkFileInPlace(relPath, quality) {
 }
 
 async function main() {
+  // --force (or FORCE=1) re-processes ALL rows, ignoring the watermarked flag,
+  // so the corrected TEXT watermark replaces the old boxed one. Default mode
+  // keeps the original idempotent behavior (only watermarked=false rows).
+  const force = process.argv.includes('--force') || process.env.FORCE === '1';
+
   const { rows } = await pool.query(
-    `SELECT id, imagepath, imagepath_medium
-       FROM public.usergallery
-      WHERE watermarked = false
-      ORDER BY id`
+    force
+      ? `SELECT id, imagepath, imagepath_medium
+           FROM public.usergallery
+          ORDER BY id`
+      : `SELECT id, imagepath, imagepath_medium
+           FROM public.usergallery
+          WHERE watermarked = false
+          ORDER BY id`
   );
 
-  console.log(`Found ${rows.length} gallery row(s) to watermark.`);
+  console.log(`Found ${rows.length} gallery row(s) to watermark${force ? ' (--force: ALL rows)' : ''}.`);
   let done = 0, failed = 0;
 
   for (const row of rows) {

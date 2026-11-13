@@ -8,8 +8,9 @@
 // Mounted once in App.js inside <Router> so it appears on every page.
 // Styling lives in src/assets/css/theme.css (.bnav*).
 // ─────────────────────────────────────────────────────────────────────────────
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { AuthContext } from '../hooks/AuthContext';
 
 const NAV_ITEMS = [
   { to: '/',              label: 'Home',      icon: 'fas fa-home' },
@@ -21,6 +22,7 @@ const NAV_ITEMS = [
 
 const BottomNav = () => {
   const location = useLocation();
+  const { isLoggedIn } = useContext(AuthContext);
 
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   useEffect(() => {
@@ -28,6 +30,10 @@ const BottomNav = () => {
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
+
+  // Guests / not-logged-in users: no bottom nav at all (and no spacer).
+  // Reactive via AuthContext — appears on login, disappears on logout.
+  if (!isLoggedIn) return null;
 
   // Desktop: no bottom nav. Admin area: no bottom nav (own layout).
   if (!isMobile) return null;

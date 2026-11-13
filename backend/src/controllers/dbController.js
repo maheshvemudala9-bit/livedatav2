@@ -13,6 +13,10 @@ const { processImage } = require('../services/imageService');
 exports.register = async (req, res) => {
   try {
     const data = req.body;
+    // Normalize email (case-insensitive) before storing. Non-email fields untouched.
+    if (data.uemail != null) {
+      data.uemail = String(data.uemail).trim().toLowerCase();
+    }
     let obj = await prepareDBData.register(data);
     if (!obj) {
       res.status(200).send(`${JSON.stringify({ status: 'Failure', result: 'Data Already Exists.' })}`);
@@ -30,7 +34,12 @@ exports.login = async (req, res) => {
     // Identifier can be an email, mobile number, or Matrimony ID (MAT123).
     // Frontend still sends it in the `uemail` field; fall back to `identifier`.
     const identifier = data.uemail != null ? data.uemail : data.identifier;
-    const userobj = await prepareDBData.GetUserDetails(identifier);
+    // Only lowercase email identifiers (contain "@"); leave phone/MAT ids as-is.
+    const normIdentifier =
+      typeof identifier === 'string' && identifier.includes('@')
+        ? identifier.trim().toLowerCase()
+        : identifier;
+    const userobj = await prepareDBData.GetUserDetails(normIdentifier);
 
     if (!userobj || userobj.length === 0) {
       return res.status(200).json({ status: 'Failure', result: 'Data Does not Exists.' });
@@ -457,8 +466,11 @@ exports.resetPassword = async (req, res) => {
       });
     }
 
+    // Normalize email (case-insensitive) for lookup and update.
+    const normEmail = String(email || '').trim().toLowerCase();
+
     // Check email exists
-    const userobj = await prepareDBData.GetUserDetails(email);
+    const userobj = await prepareDBData.GetUserDetails(normEmail);
     if (!userobj || userobj.length === 0) {
       return res.status(200).json({
         status: 'Failure',
@@ -478,7 +490,7 @@ exports.resetPassword = async (req, res) => {
     const encrypted = await convertCredentials({ upassword: newPassword }, true);
 
     // Update password in DB
-    const updated = await prepareDBData.updatePasswordByEmail(email, encrypted);
+    const updated = await prepareDBData.updatePasswordByEmail(normEmail, encrypted);
     if (!updated) {
       return res.status(500).json({
         status: 'Failure',

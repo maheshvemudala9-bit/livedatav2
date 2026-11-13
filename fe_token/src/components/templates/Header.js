@@ -515,7 +515,7 @@ const Header = () => {
                         ) : (
                           <>
                             <i className="far fa-user"></i>
-                            <span>{userDetails.ufname || 'Me'}</span>
+                            <span>{userDetails.ulname || 'Me'}</span>
                           </>
                         )}
                       </a>

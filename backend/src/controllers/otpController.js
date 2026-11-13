@@ -30,17 +30,20 @@ exports.sendOtp = async (req, res) => {
       });
     }
 
+    // Normalize email (case-insensitive) so send/verify share one key.
+    const normEmail = String(email).trim().toLowerCase();
+
     const otp = generateOtp();
 
     // Save OTP to DB with 10 min expiry
-    await db.saveOtp(email, otp);
+    await db.saveOtp(normEmail, otp);
 
     // Send OTP email
-    await sendOtpEmail(email, otp);
+    await sendOtpEmail(normEmail, otp);
 
     return res.status(200).json({
       status: 'Success',
-      result: `OTP sent to ${email}. Valid for 10 minutes.`
+      result: `OTP sent to ${normEmail}. Valid for 10 minutes.`
     });
 
   } catch (error) {
@@ -63,7 +66,10 @@ exports.verifyOtp = async (req, res) => {
       });
     }
 
-    const isValid = await db.verifyOtp(email, otp);
+    // Normalize email (case-insensitive) so verify uses the same key as send.
+    const normEmail = String(email).trim().toLowerCase();
+
+    const isValid = await db.verifyOtp(normEmail, otp);
 
     if (!isValid) {
       return res.status(200).json({

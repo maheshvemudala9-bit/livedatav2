@@ -513,7 +513,7 @@ export const ProfileCards = ({ userList, page }) => (
                   className="lst-card__link"
                   onClick={() => rememberListingPosition(page)}
                 >
-                  {res.ufname}
+                  {res.ulname}
                 </Link>
               </h3>
               <ul className="lst-facts">

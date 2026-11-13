@@ -249,7 +249,7 @@ const ProfileDetails = () => {
     if (String(loggedInUserId) === String(uid)) { alert('You cannot send a message to your own profile.'); return; }
     setMessageStatus('sending');
     setMessageText('');
-    const defaultMsg = `Hi ${userDetails.ufname}, I liked your profile. Let's discuss further if it matches.`;
+    const defaultMsg = `Hi ${userDetails.ulname}, I liked your profile. Let's discuss further if it matches.`;
     try {
       const response = await sendMessage(loggedInUserId, uid, defaultMsg, 'text');
       if (response.data.status === 'Success') {
@@ -378,7 +378,7 @@ const ProfileDetails = () => {
               </PhotoProvider>
             </div>
             <div className="pd-hero__info">
-              <h3 className="pd-hero__name">{userDetails.ufname} Profile</h3>
+              <h3 className="pd-hero__name">{userDetails.ulname} Profile</h3>
               <ul className="pd-facts">
                 <li><span>Profile Id </span>: MAT{userDetails.uid}</li>
                 <li><span>Age </span>: {age} Years</li>
@@ -481,7 +481,7 @@ const ProfileDetails = () => {
                 <ul className="nav nav-tabs pd-tabs" id="usertabs" role="tablist">
                   <li className="nav-item">
                     <a className="nav-link active pd-tab" id="overview-tab" data-toggle="tab" href="#overview" role="tab">
-                      About {userDetails.ufname}
+                      About {userDetails.ulname}
                     </a>
                   </li>
                 </ul>
@@ -493,7 +493,7 @@ const ProfileDetails = () => {
                       <div className="pd-info__head"><h4 className="pd-info__title">General Overview</h4></div>
                       <div className="pd-info__grid">
                         <ul className="pd-info__list">
-                          <li><span className="pd-info__key">FIRST NAME</span><span className="pd-info__val pd-info__val--name">{userDetails.ufname || 'Not Available'}</span></li>
+                          <li><span className="pd-info__key">FIRST NAME</span><span className="pd-info__val pd-info__val--name">{userDetails.ulname || 'Not Available'}</span></li>
                           <li><span className="pd-info__key">GENDER</span><span className="pd-info__val">{userDetails.ugender || 'Not Available'}</span></li>
                           <li><span className="pd-info__key">AGE</span><span className="pd-info__val">{age}</span></li>
                           <li><span className="pd-info__key">ON BEHALF</span><span className="pd-info__val">{userDetails.ucreated || 'Not Available'}</span></li>
@@ -501,7 +501,7 @@ const ProfileDetails = () => {
                           <li><span className="pd-info__key">PLACE OF BIRTH</span><span className="pd-info__val">{userDetails.upob || 'Not Available'}</span></li>
                         </ul>
                         <ul className="pd-info__list">
-                          <li><span className="pd-info__key">LAST NAME</span><span className="pd-info__val pd-info__val--name">{userDetails.ulname || 'Not Available'}</span></li>
+                          <li><span className="pd-info__key">SUR NAME</span><span className="pd-info__val pd-info__val--name">{userDetails.ufname || 'Not Available'}</span></li>
                           {/* <li><span className="pd-info__key">EMAIL</span><span className="pd-info__val">{userDetails.uemail || 'Not Available'}</span></li> */}
                           
                           <li><span className="pd-info__key">HEIGHT</span><span className="pd-info__val">{userDetails.uheight || 'Not Available'} Feet</span></li>
@@ -747,31 +747,31 @@ const ProfileDetails = () => {
                 {proposalStatus === 'they_sent' && (
                   <div className="pd-alert pd-alert--info">
                     <i className="fas fa-info-circle"></i>
-                    {userDetails.ufname} has already sent you a proposal. Please accept or reject it from your notification bell 🔔.
+                    {userDetails.ulname} has already sent you a proposal. Please accept or reject it from your notification bell 🔔.
                   </div>
                 )}
                 {proposalStatus === 'i_sent' && proposalMessage === 'Proposal sent successfully!' && (
                   <div className="pd-alert pd-alert--success">
                     <i className="far fa-check-circle"></i>
-                    Proposal sent successfully to {userDetails.ufname}! Waiting for response.
+                    Proposal sent successfully to {userDetails.ulname}! Waiting for response.
                   </div>
                 )}
                 {proposalStatus === 'i_sent' && proposalMessage !== 'Proposal sent successfully!' && (
                   <div className="pd-alert pd-alert--warn">
                     <i className="fas fa-clock"></i>
-                    Your proposal is pending. Waiting for {userDetails.ufname} to respond.
+                    Your proposal is pending. Waiting for {userDetails.ulname} to respond.
                   </div>
                 )}
                 {proposalStatus === 'i_accepted' && (
                   <div className="pd-alert pd-alert--success">
                     <i className="far fa-check-circle"></i>
-                    🎉 {userDetails.ufname} has accepted your proposal!
+                    🎉 {userDetails.ulname} has accepted your proposal!
                   </div>
                 )}
                 {proposalStatus === 'i_rejected' && (
                   <div className="pd-alert pd-alert--danger">
                     <i className="fas fa-times-circle"></i>
-                    {userDetails.ufname} has rejected your proposal.
+                    {userDetails.ulname} has rejected your proposal.
                   </div>
                 )}
                 {proposalStatus === 'error' && (
@@ -806,7 +806,7 @@ const ProfileDetails = () => {
                 {messageStatus === 'sent' && (
                   <div className="pd-alert pd-alert--success">
                     <i className="far fa-check-circle"></i>
-                    Message sent successfully to {userDetails.ufname}!
+                    Message sent successfully to {userDetails.ulname}!
                   </div>
                 )}
                 {messageStatus === 'error' && messageText && (
@@ -823,7 +823,7 @@ const ProfileDetails = () => {
                         <i className="far fa-comment-alt"></i>
                         Message Preview:
                       </strong>
-                      Hi {userDetails.ufname}, I liked your profile. Let's discuss further if it matches.
+                      Hi {userDetails.ulname}, I liked your profile. Let's discuss further if it matches.
                     </div>
                   </>
                 )}
