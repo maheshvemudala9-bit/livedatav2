@@ -14,6 +14,18 @@ const AdvanceSearch = () => {
   const [searchId, setSearchId] = useState('');
   const [loading,  setLoading]  = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [membershipType, setMembershipType] = useState('');
+
+  // Search by membership Type: opens Matches (/profiles) filtered by that type.
+  // "Any" opens Matches without a type filter.
+  const handleTypeSearch = (e) => {
+    e.preventDefault();
+    const allowed = ['Gold', 'Diamond', 'Premium'];
+    const query = allowed.includes(membershipType)
+      ? `?membershipType=${encodeURIComponent(membershipType)}`
+      : '';
+    navigate(`/profiles${query}`, { state: { scrollToList: Date.now() } });
+  };
 
   const handleSearch = async (e) => {
     e.preventDefault();
@@ -151,6 +163,42 @@ const AdvanceSearch = () => {
                   </div>
                 )}
 
+              </form>
+
+              {/* Divider */}
+              <div className="adv-divider" />
+
+              {/* ── Search by membership Type ───────────────────────────── */}
+              <form onSubmit={handleTypeSearch}>
+                <label className="adv-label" htmlFor="adv-type">
+                  Search by Membership Type
+                </label>
+                <div className="adv-row">
+                  <div className="adv-input-wrap">
+                    {/* TYPE prefix badge (same style as the MAT prefix) */}
+                    <div className="adv-prefix" aria-hidden="true">
+                      <span>TYPE</span>
+                    </div>
+                    <select
+                      id="adv-type"
+                      value={membershipType}
+                      onChange={(e) => setMembershipType(e.target.value)}
+                      className="adv-input adv-select"
+                    >
+                      <option value="">Any</option>
+                      <option value="Gold">Gold</option>
+                      <option value="Diamond">Diamond</option>
+                      <option value="Premium">Premium</option>
+                    </select>
+                  </div>
+                  <button type="submit" className="adv-submit">
+                    <i className="fas fa-search"></i>
+                    Search
+                  </button>
+                </div>
+                <p className="adv-help">
+                  Shows only <strong>{membershipType || 'all'}</strong> member profiles in Matches
+                </p>
               </form>
 
               {/* Divider */}

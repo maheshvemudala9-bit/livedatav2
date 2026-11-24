@@ -31,8 +31,9 @@
 
 .adm-brand {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
   padding: 4px 8px 20px;
   margin-bottom: 8px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
@@ -50,6 +51,13 @@
   color: #fff;
   font-size: 17px;
   box-shadow: 0 8px 18px -10px rgba(168, 64, 64, 0.8);
+}
+
+.adm-brand__logo {
+  display: block;
+  width: auto;
+  height: 38px;
+  max-width: 100%;
 }
 
 .adm-brand__title {
@@ -605,6 +613,11 @@
   color: var(--success);
 }
 
+.adm-pill--info {
+  background: #e3effd;
+  color: #1d4ed8;
+}
+
 .adm-muted {
   color: var(--muted);
 }
@@ -787,9 +800,16 @@
   }
 
   .adm-brand {
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
     padding: 2px 4px 8px;
     margin-bottom: 0;
     border-bottom: 0;
+  }
+
+  .adm-brand__logo {
+    height: 28px;
   }
 
   .adm-brand__icon {

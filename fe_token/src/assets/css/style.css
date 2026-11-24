@@ -1268,6 +1268,7 @@ p {
   padding: 50px 0;
   text-align: center;
 }
+.inner-heading h1,
 .inner-heading h3 {
   margin: 0;
   font-size: 24px;
@@ -4241,6 +4242,7 @@ blockquote {
     font-size: 18px;
     line-height: 22px;
   }
+  .inner-heading h1,
   .inner-heading h3 {
     font-size: 18px;
   }

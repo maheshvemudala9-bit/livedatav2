@@ -148,6 +148,17 @@
   color: var(--muted);
 }
 
+/* Block User: actions disabled while the viewer has blocked this profile.
+   pointer-events stay on so the title tooltip ("Unblock to use this") shows. */
+.pd-action--disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pd-alert .pd-btn {
+  margin-left: 12px;
+}
+
 .pd-action--muted > i {
   color: var(--subtle);
 }
@@ -1012,4 +1023,38 @@
   .pd-chip:hover {
     transform: none;
   }
+}
+
+/* Mobile: General Overview shown as one list in a logical order
+   (Name, Surname, Gender, Age, On Behalf, Date of Birth, Time of Birth,
+   Place of Birth, Height, Marital Status). The two <ul> columns are
+   flattened with display: contents so their <li>s can be reordered.
+   Desktop (>= 768px) keeps the original two-column layout. */
+@media (max-width: 767px) {
+  .pd-info__grid--ordered {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .pd-info__grid--ordered > .pd-info__list {
+    display: contents;
+  }
+
+  /* Every row gets the divider; only the final row (Marital Status) drops it. */
+  .pd-info__grid--ordered .pd-info__list > li,
+  .pd-info__grid--ordered .pd-info__list > li:last-child {
+    border-bottom: 1px dashed var(--line);
+  }
+
+  .pd-info__grid--ordered .pd-ord-1  { order: 1; }
+  .pd-info__grid--ordered .pd-ord-2  { order: 2; }
+  .pd-info__grid--ordered .pd-ord-3  { order: 3; }
+  .pd-info__grid--ordered .pd-ord-4  { order: 4; }
+  .pd-info__grid--ordered .pd-ord-5  { order: 5; }
+  .pd-info__grid--ordered .pd-ord-6  { order: 6; }
+  .pd-info__grid--ordered .pd-ord-7  { order: 7; }
+  .pd-info__grid--ordered .pd-ord-8  { order: 8; }
+  .pd-info__grid--ordered .pd-ord-9  { order: 9; }
+  .pd-info__grid--ordered .pd-ord-10 { order: 10; }
+  .pd-info__grid--ordered .pd-info__list > li.pd-ord-10 { border-bottom: 0; }
 }

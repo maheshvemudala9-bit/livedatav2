@@ -293,11 +293,17 @@ textarea.form-control {
   padding-right: 44px;
 }
 
+/* Hide the browser's native reveal/clear buttons so only our eye icon shows */
+input[type='password']::-ms-reveal,
+input[type='password']::-ms-clear {
+  display: none;
+}
+
 .pw-toggle {
   position: absolute;
   right: 6px;
   top: 31px;
-  z-index: 2;
+  z-index: 5; /* above Bootstrap .input-group > .form-control:focus (z-index: 3) */
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -439,7 +445,7 @@ textarea.form-control {
 }
 
 .ftabout img {
-  height: 48px;
+  height: 56px;
   width: auto;
   display: block;
 }
@@ -460,6 +466,15 @@ textarea.form-control {
 .copyight {
   font-size: 13px;
   color: #8a8f9c;
+}
+
+.copyright-wrap .policy a {
+  color: #aab0bd;
+  font-size: 13px;
+}
+
+.copyright-wrap .policy a:hover {
+  color: #fff;
 }
 
 /* ── Site header (replaces inline styles in Header.js) ─────────────────────── */
@@ -492,9 +507,15 @@ textarea.form-control {
 }
 
 .site-logo img {
-  height: 46px;
+  height: 52px;
   width: auto;
   display: block;
+}
+
+@media (max-width: 575px) {
+  .site-logo img {
+    height: 32px;
+  }
 }
 
 .site-brand {
@@ -503,6 +524,24 @@ textarea.form-control {
   padding-left: 16px;
   border-left: 1px solid var(--line);
   line-height: 1.25;
+}
+
+/* Single-line tagline beside the logo (desktop only) */
+.site-brand__line {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.site-brand__line strong {
+  color: var(--brand-700);
+  font-weight: 700;
+}
+
+/* Hide the tagline on narrow tablets where the header gets crowded */
+@media (max-width: 991px) {
+  .site-brand { display: none; }
 }
 
 .site-brand__eyebrow {
@@ -951,6 +990,13 @@ textarea.form-control {
   color: var(--brand);
 }
 
+/* Mobile user menu: separator after "Help & Support" */
+.hdr-menu__item--group-end {
+  border-bottom: 1px solid var(--line, #eceef2);
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+}
+
 .hdr-menu__item--danger > a {
   color: var(--danger);
 }
@@ -1046,6 +1092,27 @@ textarea.form-control {
 
 .bnav__item.is-active i {
   transform: translateY(-1px) scale(1.08);
+}
+
+.bnav__icon {
+  position: relative;
+  display: inline-flex;
+}
+
+.bnav__badge {
+  position: absolute;
+  top: -6px;
+  left: 60%;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #e11d48;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
 }
 
 /* ── Utilities ─────────────────────────────────────────────────────────────── */

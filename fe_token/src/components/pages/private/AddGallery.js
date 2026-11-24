@@ -116,7 +116,11 @@ const AddGallery = () => {
     if (event) event.preventDefault();
 
     // 🔐 Confirm before delete
-    if (!window.confirm("Are you sure you want to delete this photo? This action cannot be undone.")) {
+    const target = getGallery.find(img => img.id === galleryRecordId);
+    const confirmMsg = target && target.isprofile
+      ? "This is your PROFILE photo. Deleting it will permanently remove the photo and all its files, and you will have no profile photo until you set another one. This cannot be undone. Delete it?"
+      : "Are you sure you want to delete this photo? The photo files will be permanently deleted. This action cannot be undone.";
+    if (!window.confirm(confirmMsg)) {
       return;
     }
 
@@ -264,7 +268,7 @@ const AddGallery = () => {
                               </div>
 
                               {/* ✅ Delete Button for Existing Images */}
-                              {!file.isprofile && (
+                              {(
                                 <button
                                   type="button"
                                   className="ag-icon-btn ag-tile__delete"
@@ -279,13 +283,23 @@ const AddGallery = () => {
                               {/* Image */}
                               {/* ── ✅ FIXED: Medium for BOTH lightbox and card display ── */}
                               <div className="ag-tile__media">
+                                {file.status === 'rejected' && !(file.imagepath_medium || file.imagepath) ? (
+                                  <div
+                                    className="ag-tile__img"
+                                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', background: '#f3f3f3', color: '#777', fontSize: 14, padding: 12, minHeight: 160 }}
+                                  >
+                                    Rejected - photo removed
+                                  </div>
+                                ) : (
                                 <PhotoView src={imageUrl(file.imagepath_medium) || imageUrl(file.imagepath)}>
                                   <img
                                     className="ag-tile__img"
                                     src={imageUrl(file.imagepath_medium) || imageUrl(file.imagepath)}
                                     alt={`Gallery ${file.id}`}
+                                    data-gender={localStorage.getItem('userGender') || ''}
                                   />
                                 </PhotoView>
+                                )}
                               </div>
 
                               {/* Action Buttons */}
@@ -295,7 +309,7 @@ const AddGallery = () => {
                                   type="button"
                                   className={`ag-btn ${file.isprofile ? 'ag-btn--success' : 'ag-btn--primary'}`}
                                   onClick={() => makeProfile(file.id)}
-                                  disabled={file.isprofile || settingProfileId === file.id}
+                                  disabled={file.isprofile || file.status === 'rejected' || settingProfileId === file.id}
                                 >
                                   {settingProfileId === file.id ? (
                                     <>
@@ -308,7 +322,7 @@ const AddGallery = () => {
                                 </button>
 
                                 {/* Delete Button (Mobile-friendly text version) */}
-                                {!file.isprofile && (
+                                {(
                                   <button
                                     type="button"
                                     className="ag-btn ag-btn--danger"

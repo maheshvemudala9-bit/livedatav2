@@ -7,7 +7,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import '../../../assets/css/pages/profile-details.css';
 
 import { imageUrl } from '../../../utils/imageUrl';
-import { fetchUserDetails, fetchUserGallery, getUserContactInfo } from '../../../services/userService';
+import { placeholderFor } from '../../../utils/placeholders';
+import { fetchUserDetails, fetchUserGallery, getUserContactInfo, blockUser, unblockUser, getBlockStatus } from '../../../services/userService';
 import { getPublicProfile, getPublicGallery } from '../../../services/listingService';
 import { approvedOnly, approvedProfileImage } from '../../../utils/imageUrl';
 import {
@@ -17,6 +18,23 @@ import {
 } from '../../../services/proposalService';
 import { sendMessage } from '../../../services/messageService';
 import { useToast } from '../../../components/hooks/ToastContext';
+import { displayLocation } from '../../../data/locations';
+
+const MARRIAGE_SETTLED_TEXT = "This person's marriage is already settled";
+const ACCESS_REASONS = ['PAYMENT_REQUIRED', 'UPGRADE_REQUIRED', 'DIAMOND_ONLY', 'MARRIAGE_SETTLED'];
+
+// Maps a contact-access reason code to the text shown in the contact modal.
+// Returns '' for codes that are not access-rule denials.
+const accessDeniedMessage = (reason, requiredMembership) => {
+  switch (reason) {
+    case 'PAYMENT_REQUIRED': return 'Verification pending. Once verified, you can view contacts.';
+    case 'UPGRADE_REQUIRED': return `You can't view this contact. This member has restricted their visibility.`
+    // `Upgrade to ${requiredMembership || 'a higher plan'} to view this contact.`;
+    case 'DIAMOND_ONLY':     return `You can't view this contact. This member has restricted their visibility.`;
+    case 'MARRIAGE_SETTLED': return MARRIAGE_SETTLED_TEXT;
+    default:                 return '';
+  }
+};
 
 const ProfileDetails = () => {
   const { uid }    = useParams();
@@ -65,8 +83,20 @@ const ProfileDetails = () => {
   const [contactError,      setContactError]      = useState('');
   const [contactErrorReason,setContactErrorReason]= useState(''); // 'contact_hidden' | 'daily_limit_reached' | ''
   const [contactRevealed,   setContactRevealed]   = useState(false);
+  const [marriageSettled,   setMarriageSettled]   = useState(false);
+  const [contactAccess,     setContactAccess]     = useState(null); // {allowed, reason, requiredMembership} | null
+
+  // ── Block state ───────────────────────────────────────────────────────────
+  const [iBlocked,           setIBlocked]           = useState(false);
+  const [blockBusy,          setBlockBusy]          = useState(false);
+  const [profileUnavailable, setProfileUnavailable] = useState(false);
 
   const loggedInUserId = localStorage.getItem("userId");
+
+  // Known-denied access (from profile load or a stale reveal attempt): no unlock request is sent.
+  const deniedMessage = contactAccess && contactAccess.allowed === false
+    ? accessDeniedMessage(contactAccess.reason, contactAccess.requiredMembership)
+    : '';
 
   // ── Scroll to top on mount ────────────────────────────────────────────────
   useEffect(() => {
@@ -79,6 +109,10 @@ const ProfileDetails = () => {
     setContactRevealed(false);
     setContactError('');
     setContactErrorReason('');
+    setMarriageSettled(false);
+    setContactAccess(null);
+    setIBlocked(false);
+    setProfileUnavailable(false);
   }, [uid]);
 
   // ── Fetch profile details + gallery ──────────────────────────────────────
@@ -94,6 +128,12 @@ const ProfileDetails = () => {
           const response    = await fetchUserDetails(uid);
           const fetchimage  = await fetchUserGallery(uid);
           const profileData = response.data;
+
+          // The owner of this profile has blocked the viewer (or it does not exist).
+          if (profileData && profileData.status === 'Failure') {
+            setProfileUnavailable(true);
+            return;
+          }
 
           // ── Gender Guard ────────────────────────────────────────────────
           // Logged-in users can only view opposite gender profiles.
@@ -114,16 +154,32 @@ const ProfileDetails = () => {
           // Only an APPROVED profile image may be shown (own-profile view can
           // include pending images from the gallery API).
           const profileImg = approvedProfileImage(fetchimage.data);
-          setProfileImage(profileImg ? profileImg.imagepath : profilepics.notfound);
+          setProfileImage(profileImg ? profileImg.imagepath : placeholderFor(profileData?.ugender));
           setUserDetails(profileData);
+          setMarriageSettled(!!profileData?.marriageSettled || profileData?.marriage_status === 'Marriage Settled');
+          setContactAccess(profileData?.contactAccess || null);
+
+          // Did I block this user? (own profile has nothing to block)
+          if (String(uid) !== String(loggedInUserId)) {
+            try {
+              const bs = await getBlockStatus(uid);
+              setIBlocked(!!bs.data?.data?.iBlocked);
+            } catch (e) { /* block status is optional UI state */ }
+          }
 
         } else {
           // Guest — no gender restriction, use public endpoints
           const response   = await getPublicProfile(uid);
+          if (response.data && response.data.status === 'Failure') {
+            setProfileUnavailable(true);
+            return;
+          }
           const fetchimage = await getPublicGallery(uid);
           const profileImg = approvedProfileImage(fetchimage.data);
-          setProfileImage(profileImg ? profileImg.imagepath : profilepics.notfound);
+          setProfileImage(profileImg ? profileImg.imagepath : placeholderFor(response.data.data?.ugender));
           setUserDetails(response.data.data || {});
+          setMarriageSettled(!!response.data.marriageSettled);
+          setContactAccess(response.data.contactAccess || null);
         }
       } catch (error) {
         console.error('Error fetching user details:', error);
@@ -182,7 +238,7 @@ const ProfileDetails = () => {
 
   // ── Fetch Contact Info from API ───────────────────────────────────────────
   const handleRevealContact = async () => {
-    if (!loggedInUserId) return;
+    if (!loggedInUserId || iBlocked) return;
     setContactLoading(true);
     setContactError('');
     setContactErrorReason('');
@@ -191,17 +247,68 @@ const ProfileDetails = () => {
       if (response.data.status === 'Success') {
         setContactInfo(response.data.data);
         setContactRevealed(true);
+        if (response.data.marriageSettled) setMarriageSettled(true);
       } else {
-        // reason: 'contact_hidden' | 'daily_limit_reached' | undefined.
+        // reason: 'contact_hidden' | 'daily_limit_reached' | access codes | undefined.
         // Message text is built by the backend (includes the live limit value).
-        setContactError(response.data.result || 'Failed to fetch contact details.');
-        setContactErrorReason(response.data.reason || '');
+        const reason = response.data.reason || '';
+        if (response.data.marriageSettled) setMarriageSettled(true);
+        if (response.data.contactAccess) setContactAccess(response.data.contactAccess);
+        setContactError(
+          accessDeniedMessage(reason, response.data.contactAccess?.requiredMembership)
+          || response.data.result || 'Failed to fetch contact details.'
+        );
+        setContactErrorReason(reason);
       }
     } catch (err) {
       console.error('[CONTACT] error:', err);
       setContactError('Something went wrong. Please try again.');
     } finally {
       setContactLoading(false);
+    }
+  };
+
+  // ── Block / Unblock ───────────────────────────────────────────────────────
+  const handleBlock = async (e) => {
+    if (e) e.preventDefault();
+    if (blockBusy) return;
+    const name = userDetails.ulname || 'this user';
+    if (!window.confirm(`Block ${name}? They won't be able to see your profile or message you.`)) return;
+    setBlockBusy(true);
+    try {
+      const response = await blockUser(uid);
+      if (response.data.status === 'Success') {
+        setIBlocked(true);
+        showToast({ type: 'success', title: 'User blocked', description: 'You have blocked this user.' });
+      } else {
+        showToast({ type: 'error', title: 'Could not block', description: response.data.result || 'Please try again.' });
+      }
+    } catch (error) {
+      console.error('[BLOCK] error:', error);
+      showToast({ type: 'error', title: 'Could not block', description: 'Something went wrong. Please try again.' });
+    } finally {
+      setBlockBusy(false);
+    }
+  };
+
+  const handleUnblock = async (e) => {
+    if (e) e.preventDefault();
+    if (blockBusy) return;
+    if (!window.confirm('Unblock this user?')) return;
+    setBlockBusy(true);
+    try {
+      const response = await unblockUser(uid);
+      if (response.data.status === 'Success') {
+        setIBlocked(false);
+        showToast({ type: 'success', title: 'User unblocked', description: 'You have unblocked this user.' });
+      } else {
+        showToast({ type: 'error', title: 'Could not unblock', description: response.data.result || 'Please try again.' });
+      }
+    } catch (error) {
+      console.error('[UNBLOCK] error:', error);
+      showToast({ type: 'error', title: 'Could not unblock', description: 'Something went wrong. Please try again.' });
+    } finally {
+      setBlockBusy(false);
     }
   };
 
@@ -220,6 +327,7 @@ const ProfileDetails = () => {
 
   // ── Send Proposal Handler ─────────────────────────────────────────────────
   const handleSendProposal = async () => {
+    if (iBlocked) return;
     if (!loggedInUserId) { alert('Please login to send a proposal.'); return; }
     if (String(loggedInUserId) === String(uid)) { alert('You cannot send a proposal to your own profile.'); return; }
     setProposalStatus('sending');
@@ -245,11 +353,12 @@ const ProfileDetails = () => {
 
   // ── Send Message Handler ──────────────────────────────────────────────────
   const handleSendMessage = async () => {
+    if (iBlocked) return;
     if (!loggedInUserId) { alert('Please login to send a message.'); return; }
     if (String(loggedInUserId) === String(uid)) { alert('You cannot send a message to your own profile.'); return; }
     setMessageStatus('sending');
     setMessageText('');
-    const defaultMsg = `Hi ${userDetails.ulname}, I liked your profile. Let's discuss further if it matches.`;
+    const defaultMsg = `Hi ${userDetails.ulname}, I liked your profile and would be happy to connect. Your profile matches my preferences. I look forward to hearing from you.`;
     try {
       const response = await sendMessage(loggedInUserId, uid, defaultMsg, 'text');
       if (response.data.status === 'Success') {
@@ -355,6 +464,31 @@ const ProfileDetails = () => {
   // =========================================================================
   //  RENDER
   // =========================================================================
+  if (profileUnavailable) {
+    return (
+      <>
+        <div className="inner-heading" style={{ backgroundImage: `url(${profilepics.titlebg})` }}>
+          <div className="container">
+            <h3>Profile Details</h3>
+          </div>
+        </div>
+        <div className="inner-content pd-page">
+          <div className="container">
+            <div className="pd-alert pd-alert--info" style={{ textAlign: 'center' }}>
+              <i className="fas fa-info-circle" aria-hidden="true"></i> This profile is not available.
+              <div style={{ marginTop: 12 }}>
+                <a href="/profiles" className="pd-btn">Back to profiles</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  const blockTip = iBlocked ? 'Unblock to use this' : undefined;
+  const isOwnProfile = String(loggedInUserId) === String(uid);
+
   return (
     <>
       {/* Inner Heading */}
@@ -372,9 +506,14 @@ const ProfileDetails = () => {
           <section className="pd-hero">
             <div className="pd-photo">
               <PhotoProvider>
-                <PhotoView src={imageUrl(profileImage)}>
-                  <img src={imageUrl(profileImage)} alt="Profile" />
-                </PhotoView>
+                {/* No zoom for the "photo not available" placeholder */}
+                {String(profileImage).includes('/uploads/') ? (
+                  <PhotoView src={imageUrl(profileImage)}>
+                    <img src={imageUrl(profileImage)} alt="Profile" data-gender={userDetails.ugender || ''} />
+                  </PhotoView>
+                ) : (
+                  <img src={imageUrl(profileImage)} alt="Profile" data-gender={userDetails.ugender || ''} />
+                )}
               </PhotoProvider>
             </div>
             <div className="pd-hero__info">
@@ -384,7 +523,7 @@ const ProfileDetails = () => {
                 <li><span>Age </span>: {age} Years</li>
                 <li><span>Height</span>: {userDetails.uheight || 'Not Available'} Feet</li>
                 <li><span>Marital Status</span>: {userDetails.maritalstatus || 'Not Available'}</li>
-                <li><i className="fas fa-map-marker-alt" aria-hidden="true"></i> {userDetails.upresentloc || 'Not Available'},{userDetails.ustate}</li>
+                <li><i className="fas fa-map-marker-alt" aria-hidden="true"></i> {displayLocation(userDetails.jobcity) || 'Not Available'}</li>
               </ul>
             </div>
           </section>
@@ -396,19 +535,23 @@ const ProfileDetails = () => {
                 <>
                   <li>
                     <a href="#"
-                      className={`pd-action ${proposalTone()}`}
-                      data-toggle={canOpenModal ? 'modal' : undefined}
-                      data-target={canOpenModal ? '#sendproposal' : undefined}
-                      onClick={handleSendProposal}>
+                      className={`pd-action ${proposalTone()}${iBlocked ? ' pd-action--disabled' : ''}`}
+                      title={blockTip}
+                      aria-disabled={iBlocked ? 'true' : undefined}
+                      data-toggle={canOpenModal && !iBlocked ? 'modal' : undefined}
+                      data-target={canOpenModal && !iBlocked ? '#sendproposal' : undefined}
+                      onClick={iBlocked ? (e) => e.preventDefault() : handleSendProposal}>
                       <i className="far fa-heart" aria-hidden="true"></i> {anchorLabel()}
                     </a>
                   </li>
                   <li>
                     <a href="#"
-                      className={`pd-action ${messageTone()}`}
-                      data-toggle={canOpenMessageModal ? 'modal' : undefined}
-                      data-target={canOpenMessageModal ? '#sendmessage' : undefined}
-                      onClick={handleSendMessage}>
+                      className={`pd-action ${messageTone()}${iBlocked ? ' pd-action--disabled' : ''}`}
+                      title={blockTip}
+                      aria-disabled={iBlocked ? 'true' : undefined}
+                      data-toggle={canOpenMessageModal && !iBlocked ? 'modal' : undefined}
+                      data-target={canOpenMessageModal && !iBlocked ? '#sendmessage' : undefined}
+                      onClick={iBlocked ? (e) => e.preventDefault() : handleSendMessage}>
                       <i className="far fa-comment" aria-hidden="true"></i> {messageAnchorLabel()}
                     </a>
                   </li>
@@ -428,16 +571,40 @@ const ProfileDetails = () => {
                 </>
               )}
               <li>
-                <a href="#" className="pd-action" onClick={(e) => { e.preventDefault(); setShowContactDetailsModal(true); }}>
+                <a href="#"
+                  className={`pd-action${iBlocked ? ' pd-action--disabled' : ''}`}
+                  title={blockTip}
+                  aria-disabled={iBlocked ? 'true' : undefined}
+                  onClick={(e) => { e.preventDefault(); if (iBlocked) return; setShowContactDetailsModal(true); }}>
                   <i className="far fa-star" aria-hidden="true"></i> View Contact Details
                 </a>
               </li>
-              <li><a href="#" className="pd-action pd-action--muted"><i className="far fa-envelope" aria-hidden="true"></i> Report this profile Fake</a></li>
+              {localStorage.getItem('isLoggedIn') === 'true' && !isOwnProfile && !iBlocked && (
+                <li>
+                  <a href="#" className="pd-action pd-action--muted" onClick={handleBlock}>
+                    <i className="fas fa-ban" aria-hidden="true"></i> Block User
+                  </a>
+                </li>
+              )}
             </ul>
           </div>
 
+          {iBlocked && (
+            <div className="pd-alert pd-alert--warn" style={{ marginBottom: 16 }}>
+              <i className="fas fa-ban" aria-hidden="true"></i>
+              You have blocked this user.
+              <button type="button" className="pd-btn" onClick={handleUnblock} disabled={blockBusy}>Unblock</button>
+            </div>
+          )}
+
           {/* Profile Content */}
           <div className="pd-body">
+            {marriageSettled && (
+              <div className="pd-alert pd-alert--warn" style={{ gridColumn: '1 / -1' }}>
+                <i className="fas fa-ring"></i>
+                {MARRIAGE_SETTLED_TEXT}
+              </div>
+            )}
             <aside className="pd-side">
               <div className="pd-card pd-intro">
                 <h4 className="pd-card__title">Introduction</h4>
@@ -452,7 +619,7 @@ const ProfileDetails = () => {
                         <div className="pd-gallery__cell" key={res.id}>
                           <PhotoView src={imageUrl(res.imagepath)}>
                             <div className="pd-gallery__hit" onClick={() => setCurrentIndex(idx)}>
-                              <img src={imageUrl(res.imagepath)} alt="Profile Gallery" />
+                              <img src={imageUrl(res.imagepath)} alt="Profile Gallery" data-gender={userDetails.ugender || ''} />
                               <div className="pd-gallery__zoom"><i className="fas fa-plus"></i></div>
                             </div>
                           </PhotoView>
@@ -473,7 +640,7 @@ const ProfileDetails = () => {
                   </div>
                 )}
               </div>
-              {!isMobile && <div className="pd-ad"><img src={profilepics.gad3} alt="" /></div>}
+              {!isMobile && <div className="pd-ad"><img src={profilepics.leftads} alt="Made for Viswabrahmin families – Telugu Sambandham Matrimony" width="660" height="880" loading="lazy" decoding="async" /></div>}
             </aside>
 
             <div className="pd-main">
@@ -491,22 +658,25 @@ const ProfileDetails = () => {
                     {/* General Overview */}
                     <div className="pd-info">
                       <div className="pd-info__head"><h4 className="pd-info__title">General Overview</h4></div>
-                      <div className="pd-info__grid">
+                      {/* pd-ord-N sets the mobile order (Name, Surname, Gender, Age,
+                          On Behalf, DOB, TOB, Place of Birth, Height, Marital Status).
+                          Desktop keeps the two-column layout unchanged. */}
+                      <div className="pd-info__grid pd-info__grid--ordered">
                         <ul className="pd-info__list">
-                          <li><span className="pd-info__key">FIRST NAME</span><span className="pd-info__val pd-info__val--name">{userDetails.ulname || 'Not Available'}</span></li>
-                          <li><span className="pd-info__key">GENDER</span><span className="pd-info__val">{userDetails.ugender || 'Not Available'}</span></li>
-                          <li><span className="pd-info__key">AGE</span><span className="pd-info__val">{age}</span></li>
-                          <li><span className="pd-info__key">ON BEHALF</span><span className="pd-info__val">{userDetails.ucreated || 'Not Available'}</span></li>
-                          <li><span className="pd-info__key">DATE OF BIRTH</span><span className="pd-info__val">{userDetails.udob ? (userDetails.udob).split("/")[1]+'/'+(userDetails.udob).split("/")[0]+'/'+(userDetails.udob).split("/")[2] : 'Not Available'}</span></li>
-                          <li><span className="pd-info__key">PLACE OF BIRTH</span><span className="pd-info__val">{userDetails.upob || 'Not Available'}</span></li>
+                          <li className="pd-ord-1"><span className="pd-info__key">NAME</span><span className="pd-info__val pd-info__val--name">{userDetails.ulname || 'Not Available'}</span></li>
+                          <li className="pd-ord-3"><span className="pd-info__key">GENDER</span><span className="pd-info__val">{userDetails.ugender || 'Not Available'}</span></li>
+                          <li className="pd-ord-4"><span className="pd-info__key">AGE</span><span className="pd-info__val">{age}</span></li>
+                          <li className="pd-ord-5"><span className="pd-info__key">ON BEHALF</span><span className="pd-info__val">{userDetails.ucreated || 'Not Available'}</span></li>
+                          <li className="pd-ord-6"><span className="pd-info__key">DATE OF BIRTH</span><span className="pd-info__val">{userDetails.udob ? (userDetails.udob).split("/")[1]+'/'+(userDetails.udob).split("/")[0]+'/'+(userDetails.udob).split("/")[2] : 'Not Available'}</span></li>
+                          <li className="pd-ord-8"><span className="pd-info__key">PLACE OF BIRTH</span><span className="pd-info__val">{displayLocation(userDetails.upob) || 'Not Available'}</span></li>
                         </ul>
                         <ul className="pd-info__list">
-                          <li><span className="pd-info__key">SUR NAME</span><span className="pd-info__val pd-info__val--name">{userDetails.ufname || 'Not Available'}</span></li>
+                          <li className="pd-ord-2"><span className="pd-info__key">SURNAME</span><span className="pd-info__val pd-info__val--name">{userDetails.ufname || 'Not Available'}</span></li>
                           {/* <li><span className="pd-info__key">EMAIL</span><span className="pd-info__val">{userDetails.uemail || 'Not Available'}</span></li> */}
                           
-                          <li><span className="pd-info__key">HEIGHT</span><span className="pd-info__val">{userDetails.uheight || 'Not Available'} Feet</span></li>
-                          <li><span className="pd-info__key">MARITAL STATUS</span><span className="pd-info__val">{userDetails.maritalstatus || 'Not Available'}</span></li>
-                          <li><span className="pd-info__key">TIME OF BIRTH</span><span className="pd-info__val">{userDetails.utob || 'Not Available'}</span></li>
+                          <li className="pd-ord-9"><span className="pd-info__key">HEIGHT</span><span className="pd-info__val">{userDetails.uheight || 'Not Available'} Feet</span></li>
+                          <li className="pd-ord-10"><span className="pd-info__key">MARITAL STATUS</span><span className="pd-info__val">{userDetails.maritalstatus || 'Not Available'}</span></li>
+                          <li className="pd-ord-7"><span className="pd-info__key">TIME OF BIRTH</span><span className="pd-info__val">{userDetails.utob || 'Not Available'}</span></li>
                         </ul>
                       </div>
                     </div>
@@ -521,20 +691,7 @@ const ProfileDetails = () => {
                         </ul>
                         <ul className="pd-info__list">
                           <li><span className="pd-info__key">PADAM</span><span className="pd-info__val">{userDetails.padam || 'Not Available'}</span></li>
-                        </ul>
-                      </div>
-                    </div>
-
-                    {/* Living at */}
-                    <div className="pd-info">
-                      <div className="pd-info__head"><h4 className="pd-info__title">Living at</h4></div>
-                      <div className="pd-info__grid">
-                        <ul className="pd-info__list">
-                          <li><span className="pd-info__key">COUNTRY</span><span className="pd-info__val">{userDetails.ucountry || 'Not Available'}</span></li>
-                          <li><span className="pd-info__key">CITY</span><span className="pd-info__val">{userDetails.upresentloc || 'Not Available'}</span></li>
-                        </ul>
-                        <ul className="pd-info__list">
-                          <li><span className="pd-info__key">STATE</span><span className="pd-info__val">{userDetails.ustate || 'Not Available'}</span></li>
+                          <li><span className="pd-info__key">GOTHRAM</span><span className="pd-info__val">{userDetails.gothram || 'Not Available'}</span></li>
                         </ul>
                       </div>
                     </div>
@@ -545,11 +702,13 @@ const ProfileDetails = () => {
                       <div className="pd-info__grid">
                         <ul className="pd-info__list">
                           <li><span className="pd-info__key">HIGHEST EDUCATION</span><span className="pd-info__val">{userDetails.degree || 'Not Available'}</span></li>
+                          <li><span className="pd-info__key">EDUCATION DETAIL</span><span className="pd-info__val">{userDetails.education_detail || 'Not Available'}</span></li>
                           <li><span className="pd-info__key">ANNUAL INCOME</span><span className="pd-info__val">{userDetails.upackage || 'Not Available'}</span></li>
                         </ul>
                         <ul className="pd-info__list">
                           <li><span className="pd-info__key">OCCUPATION</span><span className="pd-info__val">{userDetails.ujob || 'Not Available'}</span></li>
-                          <li><span className="pd-info__key">JOB LOCATION</span><span className="pd-info__val">{userDetails.jobcity || 'Not Available'}</span></li>
+                          <li><span className="pd-info__key">JOB DETAIL</span><span className="pd-info__val">{userDetails.job_detail || 'Not Available'}</span></li>
+                          <li><span className="pd-info__key">JOB LOCATION</span><span className="pd-info__val">{displayLocation(userDetails.jobcity) || 'Not Available'}</span></li>
                         </ul>
                       </div>
                     </div>
@@ -570,7 +729,7 @@ const ProfileDetails = () => {
                           <li><span className="pd-info__key">MOTHER OCCUPATION</span><span className="pd-info__val">{userDetails.motheroccupation || 'Not Available'}</span></li>
                           <li><span className="pd-info__key">BROTHERS MARRIED</span><span className="pd-info__val">{userDetails.brothersmarried || 'Not Available'}</span></li>
                           <li><span className="pd-info__key">SISTERS MARRIED</span><span className="pd-info__val">{userDetails.sistersmarried || 'Not Available'}</span></li>
-                          <li><span className="pd-info__key">FAMILY RESIDENCE</span><span className="pd-info__val">{userDetails.familyresidence || 'Not Available'}</span></li>
+                          <li><span className="pd-info__key">FAMILY RESIDENCE</span><span className="pd-info__val">{displayLocation(userDetails.familyresidence) || 'Not Available'}</span></li>
                         </ul>
                       </div>
                     </div>
@@ -604,7 +763,7 @@ const ProfileDetails = () => {
               </div>
             </div>
           </div>
-          {!isMobile && <div className="pd-ad pd-ad--wide"><img src={profilepics.googleadd} alt="" /></div>}
+          {!isMobile && <div className="pd-ad pd-ad--wide"><img src={profilepics.bottomads} alt="Need help finding the right match? Chat with the Telugu Sambandham team on WhatsApp" width="2640" height="440" loading="lazy" decoding="async" /></div>}
         </div>
       </div>
 
@@ -632,11 +791,18 @@ const ProfileDetails = () => {
               {/* Logged in — before revealing */}
               {localStorage.getItem('isLoggedIn') === 'true' && !contactRevealed && (
                 <>
+                  {deniedMessage ? (
+                    <div className="pd-alert pd-alert--warn">
+                      <i className="fas fa-lock"></i>
+                      {deniedMessage}
+                    </div>
+                  ) : (
                   <p className="pd-modal__text">
                     Viewing contact details will deduct <strong><del>₹20</del></strong> from your balance.
                     Click <strong><del>Pay Now</del></strong> to reveal the phone number and email address.
                   </p>
-                  {contactError && (
+                  )}
+                  {contactError && !(deniedMessage && ACCESS_REASONS.includes(contactErrorReason)) && (
                     <div className="pd-alert pd-alert--danger">
                       <i className="fas fa-times-circle"></i>
                       {contactError}
@@ -654,6 +820,7 @@ const ProfileDetails = () => {
                       )}
                     </div>
                   )}
+                  {!deniedMessage && (
                   <div className="pd-cta">
                     <a href="#"
                       onClick={(e) => { e.preventDefault(); handleRevealContact(); }}
@@ -661,6 +828,7 @@ const ProfileDetails = () => {
                       {contactLoading ? '⏳ Loading...' : '💳 Unlock Contact (Free)'}
                     </a>
                   </div>
+                  )}
                 </>
               )}
 
@@ -671,6 +839,12 @@ const ProfileDetails = () => {
                     <i className="far fa-check-circle"></i>
                     Contact details revealed.
                   </div>
+                  {marriageSettled && (
+                    <div className="pd-alert pd-alert--warn">
+                      <i className="fas fa-ring"></i>
+                      {MARRIAGE_SETTLED_TEXT}
+                    </div>
+                  )}
                   <div className="pd-contact">
                     <h6 className="pd-contact__title">
                       <i className="far fa-user"></i>
@@ -697,6 +871,22 @@ const ProfileDetails = () => {
                         </a>
                       )}
                     </div>
+
+                    {/* Alternate phone: only when present (same visibility as primary) */}
+                    {contactInfo.ualtphone && (
+                      <div className="pd-contact__row">
+                        <div className="pd-contact__icon pd-contact__icon--phone">
+                          <i className="fas fa-phone"></i>
+                        </div>
+                        <div className="pd-contact__text">
+                          <div className="pd-contact__label">ALTERNATE PHONE</div>
+                          <div className="pd-contact__value">{contactInfo.ualtphone}</div>
+                        </div>
+                        <a href={`tel:${contactInfo.ualtphone}`} className="pd-chip pd-chip--phone">
+                          Call Now
+                        </a>
+                      </div>
+                    )}
 
                     {/* Email */}
                     <div className="pd-contact__row">
@@ -823,7 +1013,7 @@ const ProfileDetails = () => {
                         <i className="far fa-comment-alt"></i>
                         Message Preview:
                       </strong>
-                      Hi {userDetails.ulname}, I liked your profile. Let's discuss further if it matches.
+                      Hi {userDetails.ulname}, I liked your profile and would be happy to connect. Your profile matches my preferences. I look forward to hearing from you.
                     </div>
                   </>
                 )}

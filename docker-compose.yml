@@ -23,6 +23,11 @@ services:
   backend:
     build: ./backend
     restart: unless-stopped
+    # Store uploaded user photos on the host (project folder) instead of inside
+    # the container, so they survive `docker compose down` and rebuilds.
+    # Host: ./backend/src/public/uploads  ->  Container: /app/src/public/uploads
+    volumes:
+      - ./backend/src/public/uploads:/app/src/public/uploads
     ports:
       - "9012:9012"
     environment:

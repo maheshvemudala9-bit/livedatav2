@@ -9,6 +9,9 @@
 const jwt = require('jsonwebtoken');
 const adminService = require('../services/adminService');
 const { verifyPassword } = require('../services/passwordfunction');
+const { getPermissions, normalizeRole } = require('../services/adminPermissions');
+const { PAYMENT_STATUSES, MEMBERSHIP_TYPES, MARRIAGE_STATUSES } = require('../services/contactAccess');
+const { SUBJECTS: CONTACT_SUBJECTS } = require('./contactController');
 
 const MAT_RE = /^MAT\s*0*(\d+)$/i;
 
@@ -117,7 +120,8 @@ exports.login = async (req, res) => {
         email: admin.email,
         username: admin.username,
         name: admin.name,
-        role: admin.role
+        role: normalizeRole(admin.role),
+        permissions: getPermissions(admin.role)
       }
     });
   } catch (err) {
@@ -141,8 +145,25 @@ exports.logout = async (req, res) => {
   }
 };
 
-exports.me = (req, res) => {
-  return res.status(200).json({ status: 'Success', data: req.admin });
+exports.me = async (req, res) => {
+  try {
+    const admin = await adminService.getAdminById(req.admin?.adminId);
+    if (!admin) return res.status(401).json({ status: 'Failure', result: 'Admin auth required.' });
+    return res.status(200).json({
+      status: 'Success',
+      data: {
+        adminId: admin.id,
+        email: admin.email,
+        username: admin.username,
+        name: admin.name,
+        role: normalizeRole(admin.role),
+        permissions: getPermissions(admin.role)
+      }
+    });
+  } catch (err) {
+    console.error('adminController.me error:', err.message);
+    return res.status(500).json({ status: 'Failure', result: 'Server error.' });
+  }
 };
 
 // ── Dashboard ───────────────────────────────────────────────────────────────
@@ -161,7 +182,26 @@ exports.users = async (req, res) => {
   try {
     const { page, limit } = parsePaging(req);
     const search = normalizeSearch(req);
-    const { whereSql, params } = buildUserWhere(search);
+    const built = buildUserWhere(search);
+    const params = built.params.slice();
+    const conds = [];
+    [['payment_status', PAYMENT_STATUSES], ['membership_type', MEMBERSHIP_TYPES], ['marriage_status', MARRIAGE_STATUSES]]
+      .forEach(([col, allowed]) => {
+        const v = req.query[col];
+        if (typeof v === 'string' && allowed.includes(v)) {
+          params.push(v);
+          conds.push(`a.${col} = $${params.length}`);
+        }
+      });
+    const featuredFilter = req.query.featured;
+    if (featuredFilter === 'Yes' || featuredFilter === 'No') {
+      params.push(featuredFilter === 'Yes');
+      conds.push(`a.is_featured = $${params.length}`);
+    }
+    let whereSql = built.whereSql;
+    if (conds.length) {
+      whereSql = whereSql ? `${whereSql} AND ${conds.join(' AND ')}` : `WHERE ${conds.join(' AND ')}`;
+    }
     const { rows, total } = await adminService.listUsers({ page, limit, whereSql, params });
     return res.status(200).json({ status: 'Success', data: { rows, total, page, limit } });
   } catch (err) {
@@ -214,6 +254,54 @@ exports.setProfileStatus = async (req, res) => {
   }
 };
 
+function makeFieldSetter(field, allowed, action) {
+  return async (req, res) => {
+    try {
+      const uid = parseUid(req.body?.uid);
+      const value = req.body?.[field];
+      if (!uid) return res.status(200).json({ status: 'Failure', result: 'Invalid uid.' });
+      if (typeof value !== 'string' || !allowed.includes(value)) {
+        return res.status(200).json({ status: 'Failure', result: `Invalid ${field}.` });
+      }
+      const updated = await adminService.setUserField(uid, field, value);
+      if (!updated) return res.status(200).json({ status: 'Failure', result: 'User not found.' });
+      await adminService.writeAudit({
+        adminId: req.admin?.adminId, action, targetUid: uid, details: { from: updated.from, to: updated.to }
+      });
+      return res.status(200).json({ status: 'Success', data: { uid, [field]: updated.to } });
+    } catch (err) {
+      console.error(`adminController.${action} error:`, err.message);
+      return res.status(500).json({ status: 'Failure', result: 'Server error.' });
+    }
+  };
+}
+
+exports.setPaymentStatus = makeFieldSetter('payment_status', PAYMENT_STATUSES, 'update_payment_status');
+exports.setMembershipType = makeFieldSetter('membership_type', MEMBERSHIP_TYPES, 'update_membership_type');
+exports.setMarriageStatus = makeFieldSetter('marriage_status', MARRIAGE_STATUSES, 'update_marriage_status');
+
+// Featured flag: same request/response shape as the setters above
+// ({uid, featured:'Yes'|'No'}), but writes is_featured + featured_at.
+exports.setFeatured = async (req, res) => {
+  try {
+    const uid = parseUid(req.body?.uid);
+    const value = req.body?.featured !== undefined ? req.body.featured : req.body?.value;
+    if (!uid) return res.status(200).json({ status: 'Failure', result: 'Invalid uid.' });
+    if (value !== 'Yes' && value !== 'No') {
+      return res.status(200).json({ status: 'Failure', result: 'Invalid featured.' });
+    }
+    const updated = await adminService.setUserFeatured(uid, value);
+    if (!updated) return res.status(200).json({ status: 'Failure', result: 'User not found.' });
+    await adminService.writeAudit({
+      adminId: req.admin?.adminId, action: 'update_featured', targetUid: uid, details: { from: updated.from, to: updated.to }
+    });
+    return res.status(200).json({ status: 'Success', data: { uid, featured: updated.to } });
+  } catch (err) {
+    console.error('adminController.update_featured error:', err.message);
+    return res.status(500).json({ status: 'Failure', result: 'Server error.' });
+  }
+};
+
 exports.deleteUser = async (req, res) => {
   const uid = parseUid(req.params?.uid);
   if (!uid) return res.status(200).json({ status: 'Failure', result: 'Invalid uid.' });
@@ -240,6 +328,58 @@ exports.photos = async (req, res) => {
   }
 };
 
+// ── Email OTPs (read-only) ──────────────────────────────────────────────────
+const OTP_STATUSES = ['all', 'active', 'expired', 'verified'];
+exports.emailOtps = async (req, res) => {
+  try {
+    const { page, limit } = parsePaging(req);
+    const search = normalizeSearch(req);
+    const status = OTP_STATUSES.includes(req.query.status) ? req.query.status : 'all';
+    const { rows, total } = await adminService.listEmailOtps({ page, limit, search, status });
+    await adminService.writeAudit({
+      adminId: req.admin?.adminId, action: 'view_email_otps', targetUid: null, details: { search, page }
+    });
+    return res.status(200).json({ status: 'Success', data: { rows, total, page, limit } });
+  } catch (err) {
+    console.error('adminController.emailOtps error:', err.message);
+    return res.status(500).json({ status: 'Failure', result: 'Server error.' });
+  }
+};
+
+// ── Contact Us queries (read-only) ──────────────────────────────────────────
+exports.contactQueries = async (req, res) => {
+  try {
+    const { page, limit } = parsePaging(req);
+    const search = normalizeSearch(req);
+    const subject = CONTACT_SUBJECTS.includes(req.query.subject) ? req.query.subject : '';
+    const { rows, total } = await adminService.listContactQueries({ page, limit, search, subject });
+    await adminService.writeAudit({
+      adminId: req.admin?.adminId, action: 'view_contact_queries', targetUid: null, details: { search, subject, page }
+    });
+    return res.status(200).json({ status: 'Success', data: { rows, total, page, limit } });
+  } catch (err) {
+    console.error('adminController.contactQueries error:', err.message);
+    return res.status(500).json({ status: 'Failure', result: 'Server error.' });
+  }
+};
+
+// ── Blocked users (read-only) ───────────────────────────────────────────────
+exports.blockedUsers = async (req, res) => {
+  try {
+    const { page, limit } = parsePaging(req);
+    const search = normalizeSearch(req);
+    const { whereSql, params } = buildUserWhere(search);
+    const { rows, total } = await adminService.listBlockedUsers({ page, limit, whereSql, params });
+    await adminService.writeAudit({
+      adminId: req.admin?.adminId, action: 'view_blocked_users', targetUid: null, details: { search, page }
+    });
+    return res.status(200).json({ status: 'Success', data: { rows, total, page, limit } });
+  } catch (err) {
+    console.error('adminController.blockedUsers error:', err.message);
+    return res.status(500).json({ status: 'Failure', result: 'Server error.' });
+  }
+};
+
 exports.setPhotoStatus = async (req, res) => {
   try {
     const id = parseUid(req.body?.id);
@@ -250,6 +390,9 @@ exports.setPhotoStatus = async (req, res) => {
     }
     const updated = await adminService.setPhotoStatus(id, status);
     if (!updated) return res.status(200).json({ status: 'Failure', result: 'Photo not found.' });
+    if (updated.restoreBlocked) {
+      return res.status(200).json({ status: 'Failure', result: 'Rejected photos cannot be restored; files were deleted.' });
+    }
     await adminService.writeAudit({
       adminId: req.admin?.adminId, action: 'set_photo_status', targetUid: null, details: { id, status }
     });

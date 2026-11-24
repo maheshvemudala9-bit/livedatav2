@@ -4,10 +4,13 @@
 // the profile result cards and the pager.
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import Profiles from '../../templates/ImagesLoader';
 import jsonArr from '../../templates/data/jsonData';
 import { imageUrl } from '../../../utils/imageUrl';
+import { placeholderFor } from '../../../utils/placeholders';
 import { searchUsers } from '../../../services/listingService';
+import GroupedSelectOptions from '../../common/GroupedSelectOptions';
+import { EDUCATION_GROUPS, JOB_GROUPS } from '../../../data/educationJob';
+import { INDIA_STATES, displayLocation } from '../../../data/locations';
 import '../../../assets/css/pages/listing.css';
 
 export const LISTING_LIMIT = 10;
@@ -34,6 +37,7 @@ export const getSearchFiltersFromParams = (searchParams, USERGENDER) => {
   const annualIncome = searchParams.get('annualIncome');
   const occupation = searchParams.get('occupation');
   const workingLocation = searchParams.get('workingLocation');
+  const membershipType = searchParams.get('membershipType');
 
   if (gender) filters.gender = gender;
   if (ageFrom) filters.ageFrom = ageFrom;
@@ -47,6 +51,9 @@ export const getSearchFiltersFromParams = (searchParams, USERGENDER) => {
   if (annualIncome) filters.annualIncome = annualIncome;
   if (occupation) filters.occupation = occupation;
   if (workingLocation) filters.workingLocation = workingLocation;
+  if (['Gold', 'Diamond', 'Premium'].includes(membershipType)) filters.membershipType = membershipType;
+  // "Only with pictures" checkbox -> ?withPhoto=1
+  if (searchParams.get('withPhoto') === '1') filters.withPhoto = '1';
   return filters;
 };
 
@@ -97,12 +104,38 @@ export const runProfileSearch = async (searchFilters, page, limit) => {
   const payload = resp.data || {};
   const rows = Array.isArray(payload) ? payload : (payload.data || payload.rows || []);
   const total = payload.total != null ? Number(payload.total) : rows.length;
-  return { rows, total };
+  return { rows, total, viewer: payload.viewer || null };
+};
+
+// Contact-lock pill shown on a card when the viewer's plan can't see this contact.
+const LOCK_BADGES = {
+  UPGRADE_REQUIRED: {
+    cls: 'premium', icon: 'fas fa-lock', text: 'Premium',
+    title: 'Upgrade to Premium to view this contact'
+  },
+  DIAMOND_ONLY: {
+    cls: 'diamond', icon: 'fas fa-lock', text: 'Diamond',
+    title: 'Only Diamond members can view this contact'
+  },
+  MARRIAGE_SETTLED: {
+    cls: 'settled', icon: 'fas fa-ring', text: 'Marriage settled',
+    title: 'Marriage settled'
+  }
+};
+
+const ContactLockBadge = ({ lock }) => {
+  const b = lock && LOCK_BADGES[lock.reason];
+  if (!b) return null;
+  return (
+    <span className={`lst-lock lst-lock--${b.cls}`} title={b.title} aria-label={b.title}>
+      <i className={b.icon} aria-hidden="true"></i> {b.text}
+    </span>
+  );
 };
 
 export const withProfileImages = (rows) => rows.map(user => ({
   ...user,
-  profileImage: user.profile_image_thumb || user.profile_image || Profiles.notfound
+  profileImage: user.profile_image_thumb || user.profile_image || placeholderFor(user.ugender)
 }));
 
 export const getResultRange = (page, totalRecords, limit = LISTING_LIMIT) => {
@@ -151,7 +184,7 @@ export const useSalaryFilter = () => {
 };
 
 // Advanced filter form (sidebar fields on Listing, card body on Advanced Search)
-export const AdvancedSearchForm = ({ className = 'lst-sidebar-card lst-filters', showGenderField, oppositeGender, salary, onSubmit }) => {
+export const AdvancedSearchForm = ({ className = 'lst-sidebar-card lst-filters', showGenderField, oppositeGender, salary, onSubmit, defaultMembershipType = '', defaultWithPhoto = false }) => {
   const handleSubmit = (e) => {
     e.preventDefault();
     onSubmit(collectSearchFormData(e.target, oppositeGender, salary));
@@ -305,14 +338,21 @@ export const AdvancedSearchForm = ({ className = 'lst-sidebar-card lst-filters',
         </select>
       </div>
       <div className="lst-field lst-check">
-        <input type="checkbox" name="checkname" id="3dgraphic" />
-        <label htmlFor="3dgraphic">Only with pictures X</label>
+        <input
+          type="checkbox"
+          name="withPhoto"
+          value="1"
+          id="lst-with-photo"
+          key={defaultWithPhoto ? 'wp-on' : 'wp-off'}
+          defaultChecked={defaultWithPhoto}
+        />
+        <label htmlFor="lst-with-photo">Only with pictures</label>
       </div>
       <div className="lst-field">
         <label className="lst-label">State</label>
         <select name="state" className="form-control" >
           <option value="">-- No Preference --</option>
-          {jsonArr.states.map((res, i) => <option key={i} value={res.state}>{res.state}</option>)}
+          {INDIA_STATES.map((s) => <option key={s.code} value={s.name}>{s.name}</option>)}
         </select>
       </div>
       <div className="lst-field">
@@ -332,62 +372,29 @@ export const AdvancedSearchForm = ({ className = 'lst-sidebar-card lst-filters',
       <div className="lst-field">
         <label className="lst-label">Education</label>
         <select name="education" className="form-control" id="education">
-          <option value="">-- No Preference --</option>
-          <option value="Middle School">Middle School</option>
-          <option value="Intermediates">Intermediates</option>
-          <option value="Bachelors">Bachelors</option>
-          <option value="Masters">Masters</option>
-          <option value="Doctorate">Doctorate</option>
-          <option value="Uneducated">Uneducated</option>
-          <option value="Diploma">Diploma</option>
-          <option value="ITI">ITI</option>
-          <option value="BTech">BTech</option>
-          <option value="MTech">MTech</option>
-          <option value="MBBS">MBBS</option>
-          <option value="BPharm">BPharm</option>
-          <option value="M.Pharm">M.Pharm</option>
-          <option value="BSc">BSc</option>
-          <option value="BSc Nursing">BSc Nursing</option>
-          <option value="BSc Agriculture">BSc Agriculture</option>
-          <option value="BA">BA</option>
-          <option value="BCom">BCom</option>
-          <option value="MBA">MBA</option>
-          <option value="B.E.">B.E.</option>
-          <option value="M.E.">M.E.</option>
-          <option value="B.Sc">B.Sc</option>
-          <option value="M.Sc">M.Sc</option>
-          <option value="BBA">BBA</option>
-          <option value="BCA">BCA</option>
-          <option value="MCA">MCA</option>
-          <option value="B.Arch">B.Arch</option>
-          <option value="B.Ed">B.Ed</option>
-          <option value="LLB">LLB</option>
-          <option value="BAMS">BAMS</option>
-          <option value="BHMS">BHMS</option>
-          <option value="BDS">BDS</option>
-          <option value="M.Ed">M.Ed</option>
-          <option value="MSW">MSW</option>
-          <option value="MPT">MPT</option>
-          <option value="MDS">MDS</option>
-          <option value="M.Ch">M.Ch</option>
-          <option value="DM">DM</option>
-          <option value="M.Sc Nursing">M.Sc Nursing</option>
-          <option value="M.Sc Agri">M.Sc Agri</option>
-          <option value="PhD">PhD</option>
-          <option value="CA">CA</option>
-          <option value="ICWA">ICWA</option>
-          <option value="CMA">CMA</option>
-          <option value="CS">CS</option>
-          <option value="CFA">CFA</option>
-          <option value="Pursuing UG">Pursuing UG</option>
-          <option value="Pursuing PG">Pursuing PG</option>
+          <option value="">Any</option>
+          <GroupedSelectOptions groups={EDUCATION_GROUPS} />
+        </select>
+      </div>
+      <div className="lst-field">
+        <label className="lst-label">Type</label>
+        <select
+          name="membershipType"
+          className="form-control"
+          key={defaultMembershipType}
+          defaultValue={defaultMembershipType}
+        >
+          <option value="">Any</option>
+          <option value="Gold">Gold</option>
+          <option value="Diamond">Diamond</option>
+          <option value="Premium">Premium</option>
         </select>
       </div>
       <div className="lst-field">
         <label className="lst-label">Occupation</label>
         <select name="occupation" className="form-control" id="occupation">
-          <option value="">-- No Preference --</option>
-          {jsonArr.occupationData.map((res, i) => <option key={i} value={res.occupation}>{res.occupation}</option>)}
+          <option value="">Any</option>
+          <GroupedSelectOptions groups={JOB_GROUPS} />
         </select>
       </div>
       {/* Salary Amount Input */}
@@ -490,10 +497,11 @@ export const ProfileCards = ({ userList, page }) => (
     <ul className="lst-grid">
       {userList.length > 0 ? (
         userList.map(res => (
-          <li className="lst-card" key={res.uid}>
+          <li className={`lst-card${res.contactLock ? ' lst-card--locked' : ''}`} key={res.uid}>
             <div className="lst-card__photo">
               <img
                 src={imageUrl(res.profileImage)}
+                data-gender={res.ugender || ''}
                 alt=""
               />
             </div>
@@ -516,6 +524,7 @@ export const ProfileCards = ({ userList, page }) => (
                   {res.ulname}
                 </Link>
               </h3>
+              <ContactLockBadge lock={res.contactLock} />
               <ul className="lst-facts">
                 <li title="Age">
                   <i className="far fa-calendar-alt"></i>
@@ -524,7 +533,7 @@ export const ProfileCards = ({ userList, page }) => (
                     : "Not Available"}
                 </li>
                 <li title="Location">
-                  <i className="fas fa-map-marker-alt"></i> {res.familyresidence}
+                  <i className="fas fa-map-marker-alt"></i> {displayLocation(res.familyresidence)}
                 </li>
                 <li title="Gender">
                   <i className="fas fa-female"></i> {res.ugender}

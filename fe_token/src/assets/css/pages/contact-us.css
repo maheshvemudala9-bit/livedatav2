@@ -1,0 +1,155 @@
+.cu-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.cu-card {
+  background: #fff;
+  padding: 28px 30px;
+  border-radius: 8px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  color: #333;
+}
+
+.cu-title {
+  color: var(--brand-700, #7a2222);
+  font-size: 20px;
+  margin: 0 0 16px;
+}
+
+.cu-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 18px;
+}
+
+.cu-col {
+  min-width: 0;
+  position: relative;
+}
+
+.cu-col--full {
+  grid-column: 1 / -1;
+}
+
+.cu-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-soft, #4b4950);
+}
+
+.cu-error {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--danger, #b42318);
+}
+
+.cu-count {
+  display: block;
+  margin-top: 4px;
+  text-align: right;
+  font-size: 12px;
+  color: #777;
+}
+
+.form-control.cu-field--error,
+.form-control.cu-field--error:hover {
+  border-color: #f0a3a3;
+  background: #fffafa;
+}
+
+.form-control.cu-field--error:focus {
+  border-color: var(--danger, #b42318);
+  box-shadow: 0 0 0 4px rgba(180, 35, 24, 0.14);
+}
+
+.cu-success {
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #e8f6ee;
+  color: var(--success, #15803d);
+  font-size: 14px;
+}
+
+.cu-submit {
+  margin-top: 20px;
+  min-height: 48px;
+  padding: 0 28px;
+}
+
+.cu-submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.8;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Honeypot: off-screen, not display:none (some bots skip display:none fields) */
+.cu-hp {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+.cu-side__text {
+  font-size: 14px;
+  line-height: 1.6;
+  margin-bottom: 14px;
+}
+
+.cu-info {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cu-info li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.cu-info i {
+  color: var(--brand, #a84040);
+  margin-top: 3px;
+  width: 16px;
+  text-align: center;
+}
+
+.cu-info a {
+  color: var(--brand, #a84040);
+  word-break: break-all;
+}
+
+@media (max-width: 767px) {
+  .cu-layout {
+    grid-template-columns: minmax(0, 1fr);
+    padding-bottom: 80px; /* room for the mobile bottom nav */
+  }
+
+  .cu-card {
+    padding: 20px 16px;
+  }
+
+  .cu-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cu-submit {
+    width: 100%;
+  }
+}

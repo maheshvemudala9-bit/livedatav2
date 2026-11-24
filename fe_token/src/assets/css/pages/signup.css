@@ -140,6 +140,17 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+/* Employment rows use the normal .sg-grid layout (1 column on phones, 2 on wider screens):
+   Employed In + Profession, then Salary Amount + Salary Unit. Same gap before the location rows. */
+.sg-grid--emp + .sg-grid {
+  margin-top: 16px;
+}
+
+.sg-grid--emp .form-control:disabled {
+  background: #f3f4f6;
+  cursor: not-allowed;
+}
+
 .sg-col--full {
   grid-column: 1 / -1;
 }
@@ -165,8 +176,9 @@
   display: block;
   margin-top: 6px;
   font-size: 12px;
-  font-weight: 500;
-  color: var(--danger);
+  font-weight: 600;
+  /* Clear red for "<field> is required" messages; !important so legacy span/label colours can't override it */
+  color: #dc2626 !important;
 }
 
 /* Form control in an error state (the base .form-control comes from theme.css) */

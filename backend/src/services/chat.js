@@ -228,7 +228,11 @@ const getInbox = async (userId) => {
              FROM conversations c
              JOIN users u1 ON u1.uid = c.user1_id
              JOIN users u2 ON u2.uid = c.user2_id
-             WHERE c.user1_id = $1 OR c.user2_id = $1
+             WHERE (c.user1_id = $1 OR c.user2_id = $1)
+               AND NOT EXISTS (
+                 SELECT 1 FROM public.user_blocks ub
+                 WHERE ub.blocker_uid = (CASE WHEN c.user1_id = $1 THEN c.user2_id ELSE c.user1_id END)
+                   AND ub.blocked_uid = $1)
              ORDER BY c.updated_at DESC`,
             [userId]
         );
@@ -252,7 +256,10 @@ const getUnreadMessageCount = async (userId) => {
             `SELECT COUNT(*) AS count FROM messages
              WHERE receiver_id = $1
                AND is_read = false
-               AND deleted_by_receiver = false`,
+               AND deleted_by_receiver = false
+               AND NOT EXISTS (
+                 SELECT 1 FROM public.user_blocks ub
+                 WHERE ub.blocker_uid = messages.sender_id AND ub.blocked_uid = $1)`,
             [userId]
         );
         return parseInt(result.rows[0].count, 10);

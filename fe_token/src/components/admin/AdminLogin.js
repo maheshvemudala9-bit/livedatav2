@@ -12,6 +12,7 @@ import { useNavigate } from 'react-router-dom';
 import adminApi from './adminApi';
 import '../../assets/css/pages/admin.css';
 import '../../assets/css/pages/admin-login.css';
+import logoHeader from '../../assets/images/logo/logo-header-trim.png';
 
 const AdminLogin = () => {
   const navigate = useNavigate();
@@ -54,9 +55,7 @@ const AdminLogin = () => {
     <div className="adm-login">
       <form onSubmit={handleSubmit} className="adm-login__card">
         <div className="adm-login__brand">
-          <span className="adm-login__icon">
-            <i className="fa-solid fa-user-shield" aria-hidden="true" />
-          </span>
+          <img className="adm-login__logo" src={logoHeader} width="602" height="148" alt="TeluguSambandham – Telugu Matrimony" />
           <h2 className="adm-login__title">Admin Login</h2>
         </div>
 

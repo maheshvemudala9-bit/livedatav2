@@ -2,7 +2,7 @@
 
 
 import React, { useEffect, useState, useRef } from 'react'
-import { useSearchParams, useLocation } from "react-router-dom"
+import { useSearchParams, useLocation, useNavigate, Link } from "react-router-dom"
 import Profiles from "../../templates/ImagesLoader"
 import api from '../../../utils/api'
 import '../../../assets/css/pages/listing.css';
@@ -38,6 +38,8 @@ const Listing = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [totalPages, setTotalPages] = useState(0);
   const [totalRecords, setTotalRecords] = useState(0);
+  // Viewer's own payment info from the list response ({ paid, membershipType }).
+  const [viewerInfo, setViewerInfo] = useState(null);
   const LIMIT = LISTING_LIMIT;
   const USERGENDER = localStorage.getItem("userGender");
   const userId = localStorage.getItem("userId");
@@ -128,6 +130,7 @@ const Listing = () => {
 
         setTotalRecords(total);
         setTotalPages(Math.ceil(total / LIMIT));
+        setViewerInfo(res.data && res.data.viewer ? res.data.viewer : null);
 
         // ✅ Profile images are now included in the API response as profile_image_thumb
         // This eliminates 10 separate API calls per page load!
@@ -150,8 +153,9 @@ const Listing = () => {
   useEffect(() => {
     const fetchSearchResults = async () => {
       try {
-        const { rows, total } = await runProfileSearch(searchFilters, page, LIMIT);
+        const { rows, total, viewer } = await runProfileSearch(searchFilters, page, LIMIT);
 
+        setViewerInfo(viewer);
         setTotalRecords(total);
         setTotalPages(Math.ceil(total / LIMIT));
 
@@ -178,6 +182,23 @@ const Listing = () => {
 
   const { start, end } = getResultRange(page, totalRecords, LIMIT);
   const location = useLocation();
+  const navigate = useNavigate();
+
+  // Smooth-scroll to the results list when arriving via a "Matches" link.
+  const scrollToListToken = location.state?.scrollToList;
+  useEffect(() => {
+    if (!scrollToListToken) return;
+    const timer = setTimeout(() => {
+      const el = document.getElementById('profiles-list');
+      if (el) {
+        const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+      }
+      // Clear the state so refresh/back doesn't scroll again (query string kept).
+      navigate(location.pathname + location.search, { replace: true, state: null });
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [scrollToListToken]);
 
   // Restore scroll position when returning from ProfileDetails
   const scrollRestoredRef = useRef(false);
@@ -322,11 +343,13 @@ const Listing = () => {
                   oppositeGender={oppositeGender}
                   salary={salary}
                   onSubmit={updateSearchInUrl}
+                  defaultMembershipType={searchFilters.membershipType || ''}
+                  defaultWithPhoto={searchFilters.withPhoto === '1'}
                 />
               )}
             </aside>
 
-            <section className="lst-results">
+            <section className="lst-results" id="profiles-list">
                 {isSearchActive && (
                   <div className="lst-active">
                     <span>
@@ -335,6 +358,8 @@ const Listing = () => {
                       {searchFilters.ageTo && ` - ${searchFilters.ageTo}`}
                       {searchFilters.maritalStatus && ` | Status: ${searchFilters.maritalStatus}`}
                       {searchFilters.gender && ` | Gender: ${searchFilters.gender}`}
+                      {searchFilters.membershipType && ` | Type: ${searchFilters.membershipType}`}
+                      {searchFilters.withPhoto === '1' && ' | With pictures'}
                     </span>
                     <button className="lst-clear-btn" onClick={clearSearch}>
                       Clear Search
@@ -355,6 +380,21 @@ const Listing = () => {
                     Displaying Results: {userList.length > 0 ? `${start} - ${end}` : '0'} from {totalRecords} Profiles
                   </div>
                 </div>
+
+                {userId && viewerInfo && viewerInfo.paid === false && (
+                  <div className="lst-note lst-note--pay" role="status">
+                    <i className="fas fa-info-circle" aria-hidden="true"></i>
+                    <span>Complete your payment to view contact numbers. <Link to="/contact-us">Contact Us</Link></span>
+                  </div>
+                )}
+
+                {userList.some(u => u.contactLock) && (
+                  <p className="lst-legend">
+                    <i className="fas fa-lock" aria-hidden="true"></i>{' '}
+                    Profiles marked with a lock need a higher plan to view contact numbers.{' '}
+                    <Link to="/contact-us">Contact Help &amp; Support</Link> to upgrade.
+                  </p>
+                )}
 
                 <ProfileCards userList={userList} page={page} />
 

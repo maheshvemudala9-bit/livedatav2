@@ -7,13 +7,15 @@ import Sidebar from './templates/Sidebar';
 import '../../../assets/css/message.css';
 import '../../../assets/css/pages/messages.css';
 import { useNavigate } from 'react-router-dom';
-import { imageUrl } from '../../../utils/imageUrl';
+import { imageUrl, approvedProfileImage } from '../../../utils/imageUrl';
+import { placeholderFor } from '../../../utils/placeholders';
 import {
   fetchInbox as fetchInboxService,
   fetchMessages as fetchMessagesService,
   sendMessage as sendMessageService,
   deleteMessage as deleteMessageService
 } from '../../../services/messageService';
+import { blockUser, unblockUser, getBlockStatus, fetchUserGallery } from '../../../services/userService';
 
 
 const Messages = () => {
@@ -29,8 +31,30 @@ const userId = Number(localStorage.getItem('userId'));
   const [newMessage,      setNewMessage]      = useState('');
   const [sending,         setSending]         = useState(false);
   const [flashMsg,        setFlashMsg]        = useState('');
+  const [blockStatus,     setBlockStatus]     = useState({ iBlocked: false, blockedMe: false });
+  const [menuOpen,        setMenuOpen]        = useState(false);
+  const [blockBusy,       setBlockBusy]       = useState(false);
+  // Logged-in user's own avatar for sent bubbles: approved profile photo (thumb),
+  // otherwise the gender placeholder.
+  const myGender = localStorage.getItem('userGender') || '';
+  const [myPic,           setMyPic]           = useState(() => placeholderFor(myGender));
+
+  useEffect(() => {
+    if (!userId) return undefined;
+    let alive = true;
+    fetchUserGallery(userId)
+      .then((res) => {
+        const rows = Array.isArray(res?.data) ? res.data : (Array.isArray(res?.data?.data) ? res.data.data : []);
+        const p = approvedProfileImage(rows);
+        const src = p ? (imageUrl(p.imagepath_thumb) || imageUrl(p.imagepath)) : null;
+        if (alive && src) setMyPic(src);
+      })
+      .catch(() => { /* keep placeholder */ });
+    return () => { alive = false; };
+  }, [userId]);
 
   // ─── Refs ─────────────────────────────────────────────────────────────────
+  const menuWrapRef          = useRef(null);
   const inputRef             = useRef(null);
   const pollingRef           = useRef(null);
   const activeConvRef        = useRef(null);
@@ -81,8 +105,30 @@ const userId = Number(localStorage.getItem('userId'));
     if (isInitial) { setMessagesLoading(true); setMessages([]); }
     try {
       const res = await fetchMessagesService(userId, otherUserId, 1, 100);
+      // Fetching marks messages read server-side: refresh the bottom-nav badge.
+      if (isInitial) {
+        window.dispatchEvent(new CustomEvent('unread-messages-changed'));
+        // Opening the chat marked its messages read: clear the row's unread state.
+        setInbox(prev => prev.map(c =>
+          c.other_user_id === otherUserId ? { ...c, unread_count: 0 } : c));
+      }
+      // The other user has blocked me: this conversation is no longer available.
+      if (res.data.status === 'Failure' && res.data.reason === 'not_available') {
+        if (pollingRef.current) clearInterval(pollingRef.current);
+        pollingRef.current = null;
+        setActiveConv(null);
+        setMessages([]);
+        fetchInbox();
+        if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+        setFlashMsg('This conversation is no longer available.');
+        flashTimerRef.current = setTimeout(() => setFlashMsg(''), 2500);
+        return;
+      }
       if (res.data.status === 'Success') {
         const newMsgs = res.data.data || [];
+        if (typeof res.data.iBlocked === 'boolean') {
+          setBlockStatus(s => (s.iBlocked === res.data.iBlocked ? s : { ...s, iBlocked: res.data.iBlocked }));
+        }
         if (isInitial) {
           setMessages(newMsgs);
           setTimeout(() => scrollChatToBottom(), 80);
@@ -106,6 +152,15 @@ const userId = Number(localStorage.getItem('userId'));
   const openConversation = (conv) => {
     if (pollingRef.current) clearInterval(pollingRef.current);
     setActiveConv(conv);
+    setBlockStatus({ iBlocked: false, blockedMe: false });
+    setMenuOpen(false);
+    getBlockStatus(conv.other_user_id)
+      .then((res) => {
+        // Ignore a stale answer if the user already switched conversation.
+        if (activeConvRef.current?.other_user_id !== conv.other_user_id && activeConvRef.current) return;
+        if (res.data?.status === 'Success' && res.data.data) setBlockStatus(res.data.data);
+      })
+      .catch((err) => console.error('[CHAT] getBlockStatus:', err));
     fetchMessages(conv.other_user_id, true);
     pollingRef.current = setInterval(() => {
       const current = activeConvRef.current;
@@ -118,8 +173,57 @@ const userId = Number(localStorage.getItem('userId'));
   const closeConversation = () => {
     if (pollingRef.current) clearInterval(pollingRef.current);
     pollingRef.current = null;
+    // Messages read while the chat was open: refresh the bottom-nav badge now.
+    window.dispatchEvent(new CustomEvent('unread-messages-changed'));
     setActiveConv(null);
   };
+
+  // ─── Mobile: keep the open chat fitted to the visible area (keyboard) ─────
+  const frameRef = useRef(null);
+  const chatOpen = !!activeConv;
+  useEffect(() => {
+    if (!chatOpen) return undefined;
+    const frame = frameRef.current;
+    const mq = window.matchMedia('(max-width: 767px)');
+    if (!frame || !mq.matches) return undefined;
+    const vv = window.visualViewport;
+    document.body.classList.add('msg-chat-open');
+    let lastH = vv ? vv.height : window.innerHeight;
+    const apply = () => {
+      const h = vv ? vv.height : window.innerHeight;
+      const top = vv ? vv.offsetTop : 0;
+      const wasNearBottom = isChatNearBottom();
+      frame.style.setProperty('--chat-vh', `${h}px`);
+      frame.style.setProperty('--chat-top', `${top}px`);
+      if (Math.abs(h - lastH) > 1 && wasNearBottom) scrollChatToBottom();
+      lastH = h;
+    };
+    apply();
+    const onFocusIn = (e) => {
+      if (e.target && e.target.tagName === 'INPUT') {
+        setTimeout(() => { if (window.scrollY !== 0) window.scrollTo(0, 0); apply(); }, 100);
+      }
+    };
+    if (vv) {
+      vv.addEventListener('resize', apply);
+      vv.addEventListener('scroll', apply);
+    } else {
+      window.addEventListener('resize', apply);
+    }
+    frame.addEventListener('focusin', onFocusIn);
+    return () => {
+      document.body.classList.remove('msg-chat-open');
+      if (vv) {
+        vv.removeEventListener('resize', apply);
+        vv.removeEventListener('scroll', apply);
+      } else {
+        window.removeEventListener('resize', apply);
+      }
+      frame.removeEventListener('focusin', onFocusIn);
+      frame.style.removeProperty('--chat-vh');
+      frame.style.removeProperty('--chat-top');
+    };
+  }, [chatOpen, isChatNearBottom, scrollChatToBottom]);
 
   // Stop polling on unmount
   useEffect(() => {
@@ -161,6 +265,7 @@ const userId = Number(localStorage.getItem('userId'));
   // ─── Send Message ─────────────────────────────────────────────────────────
   const handleSend = async () => {
     if (!newMessage.trim() || !activeConv || sending) return;
+    if (blockStatus.iBlocked || blockStatus.blockedMe) return;
     const text = newMessage.trim();
     setNewMessage('');
     setSending(true);
@@ -177,6 +282,15 @@ const userId = Number(localStorage.getItem('userId'));
       if (res.data.status === 'Success') {
         setMessages(prev => prev.map(m => m._temp ? { ...res.data.data } : m));
         fetchInbox();
+      } else {
+        // Rejected by the server (e.g. blocked): drop the optimistic message.
+        setMessages(prev => prev.filter(m => !m._temp));
+        if (res.data.reason === 'you_blocked') {
+          setBlockStatus(s => ({ ...s, iBlocked: true }));
+        } else {
+          setNewMessage(text);
+          showFlash(res.data.result || 'Message could not be sent.');
+        }
       }
     } catch (err) {
       console.error('[CHAT] sendMessage:', err);
@@ -188,6 +302,60 @@ const userId = Number(localStorage.getItem('userId'));
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
   };
+
+  // ─── Block / Unblock from the chat menu ───────────────────────────────────
+  const handleBlockFromChat = async () => {
+    if (!activeConv || blockBusy) return;
+    setMenuOpen(false);
+    if (!window.confirm(`Block ${activeConv.other_fname}? They won't be able to see your profile or message you.`)) return;
+    setBlockBusy(true);
+    try {
+      const res = await blockUser(activeConv.other_user_id);
+      if (res.data.status === 'Success') {
+        setBlockStatus(s => ({ ...s, iBlocked: true }));
+        showFlash('User blocked.');
+      } else {
+        showFlash(res.data.result || 'Could not block this user.');
+      }
+    } catch (err) {
+      console.error('[CHAT] blockUser:', err);
+      showFlash('Could not block this user.');
+    } finally { setBlockBusy(false); }
+  };
+
+  const handleUnblockFromChat = async () => {
+    if (!activeConv || blockBusy) return;
+    setMenuOpen(false);
+    if (!window.confirm(`Unblock ${activeConv.other_fname}?`)) return;
+    setBlockBusy(true);
+    try {
+      const res = await unblockUser(activeConv.other_user_id);
+      if (res.data.status === 'Success') {
+        setBlockStatus(s => ({ ...s, iBlocked: false }));
+        showFlash('User unblocked.');
+      } else {
+        showFlash(res.data.result || 'Could not unblock this user.');
+      }
+    } catch (err) {
+      console.error('[CHAT] unblockUser:', err);
+      showFlash('Could not unblock this user.');
+    } finally { setBlockBusy(false); }
+  };
+
+  // Close the three-dots menu on outside click or Escape
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const onDown = (e) => {
+      if (menuWrapRef.current && !menuWrapRef.current.contains(e.target)) setMenuOpen(false);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setMenuOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen]);
 
   // ─── Delete Message ───────────────────────────────────────────────────────
   const handleDelete = async (messageId) => {
@@ -242,26 +410,26 @@ const userId = Number(localStorage.getItem('userId'));
   // imagepath_thumb → tiny 150×150 → perfect for inbox list + chat bubbles
   // Falls back to imagepath if thumb not yet generated (old records)
   const getProfilePic = (conv) => {
-    if (!conv?.other_profile_pic) return Profiles.notfound;
+    if (!conv?.other_profile_pic) return placeholderFor(conv?.other_gender);
     return imageUrl(conv.other_profile_pic_thumb)
         || imageUrl(conv.other_profile_pic)
-        || Profiles.notfound;
+        || placeholderFor(conv?.other_gender);
   };
 
   // ── Active chat header pic — medium is better for header ──────────────────
   const getHeaderPic = (conv) => {
-    if (!conv?.other_profile_pic) return Profiles.notfound;
+    if (!conv?.other_profile_pic) return placeholderFor(conv?.other_gender);
     return imageUrl(conv.other_profile_pic_medium)
         || imageUrl(conv.other_profile_pic)
-        || Profiles.notfound;
+        || placeholderFor(conv?.other_gender);
   };
 
   // ── Chat bubble sender pic — thumb is enough for small avatar ─────────────
   const getBubblePic = (conv) => {
-    if (!conv?.other_profile_pic) return Profiles.notfound;
+    if (!conv?.other_profile_pic) return placeholderFor(conv?.other_gender);
     return imageUrl(conv.other_profile_pic_thumb)
         || imageUrl(conv.other_profile_pic)
-        || Profiles.notfound;
+        || placeholderFor(conv?.other_gender);
   };
 
   // ─── Render ───────────────────────────────────────────────────────────────
@@ -277,7 +445,7 @@ const userId = Number(localStorage.getItem('userId'));
             <div className="row">
               <Sidebar />
               <div className="col-lg-8 col-md-8">
-                <div className={`msg-frame ${activeConv ? 'is-chat-open' : ''}`}>
+                <div ref={frameRef} className={`msg-frame ${activeConv ? 'is-chat-open' : ''}`}>
 
                   {/* ── LEFT PANEL — Inbox list ─────────────────────────────── */}
                   <div className="msg-list-panel">
@@ -309,7 +477,7 @@ const userId = Number(localStorage.getItem('userId'));
                           return (
                             <li
                               key={conv.conversation_id}
-                              className={`msg-contact ${isActive ? 'is-active' : ''}`}
+                              className={`msg-contact ${isActive ? 'is-active' : ''} ${hasUnread ? 'msg-contact--unread' : ''}`}
                               onClick={() => openConversation(conv)}
                             >
                               <div className="msg-contact__wrap">
@@ -319,7 +487,8 @@ const userId = Number(localStorage.getItem('userId'));
                                   className="msg-contact__avatar"
                                   src={getProfilePic(conv)}
                                   alt={conv.other_fname}
-                                  onError={e => { e.target.src = Profiles.notfound; }}
+                                  data-gender={conv.other_gender || ''}
+                                  onError={e => { e.target.src = placeholderFor(conv.other_gender); }}
                                 />
                                 <div className="msg-contact__meta">
                                   <p className="msg-contact__name user-name">{conv.other_fname} {conv.other_lname}</p>
@@ -332,7 +501,8 @@ const userId = Number(localStorage.getItem('userId'));
                                 </div>
                                 {hasUnread && (
                                   <span className="msg-unread">
-                                    {conv.unread_count > 9 ? '9+' : conv.unread_count}
+                                    {conv.unread_count > 99 ? '99+' : conv.unread_count}
+                                    <span className="msg-sr-only"> unread messages</span>
                                   </span>
                                 )}
                               </div>
@@ -373,7 +543,8 @@ const userId = Number(localStorage.getItem('userId'));
                             src={getHeaderPic(activeConv)}
                             alt={activeConv.other_fname}
                             onClick={viewUserProfile}
-                            onError={e => { e.target.src = Profiles.notfound; }}
+                            data-gender={activeConv.other_gender || ''}
+                            onError={e => { e.target.src = placeholderFor(activeConv.other_gender); }}
                           />
                           <div className="msg-chat__who">
                             <p
@@ -402,9 +573,42 @@ const userId = Number(localStorage.getItem('userId'));
                             >
                               <i className="fa fa-video-camera" aria-hidden="true"></i>
                             </button>
-                            <span className="msg-chat__tool msg-chat__tool--static" aria-hidden="true">
-                              <i className="fa fa-ellipsis-v"></i>
-                            </span>
+                            <div className="msg-chat__menu-wrap" ref={menuWrapRef}>
+                              <button
+                                type="button"
+                                className="msg-chat__tool"
+                                onClick={() => setMenuOpen(o => !o)}
+                                aria-haspopup="menu"
+                                aria-expanded={menuOpen}
+                                aria-label="More options"
+                                title="More options"
+                              >
+                                <i className="fa fa-ellipsis-v" aria-hidden="true"></i>
+                              </button>
+                              {menuOpen && (
+                                <ul className="msg-chat__menu" role="menu">
+                                  <li role="none">
+                                    <button type="button" role="menuitem" className="msg-chat__menu-item"
+                                      onClick={() => { setMenuOpen(false); viewUserProfile(); }}>
+                                      <i className="fa fa-user" aria-hidden="true"></i> View Profile
+                                    </button>
+                                  </li>
+                                  <li role="none">
+                                    {blockStatus.iBlocked ? (
+                                      <button type="button" role="menuitem" className="msg-chat__menu-item"
+                                        onClick={handleUnblockFromChat} disabled={blockBusy}>
+                                        <i className="fa fa-ban" aria-hidden="true"></i> Unblock User
+                                      </button>
+                                    ) : (
+                                      <button type="button" role="menuitem" className="msg-chat__menu-item"
+                                        onClick={handleBlockFromChat} disabled={blockBusy}>
+                                        <i className="fa fa-ban" aria-hidden="true"></i> Block User
+                                      </button>
+                                    )}
+                                  </li>
+                                </ul>
+                              )}
+                            </div>
                           </div>
                         </div>
 
@@ -442,11 +646,12 @@ const userId = Number(localStorage.getItem('userId'));
                                       <img
                                         className="msg-row__avatar"
                                         src={isSent
-                                          ? Profiles.authorimg
+                                          ? myPic
                                           : getBubblePic(activeConv)
                                         }
                                         alt=""
-                                        onError={e => { e.target.src = Profiles.notfound; }}
+                                        data-gender={isSent ? (localStorage.getItem('userGender') || '') : (activeConv.other_gender || '')}
+                                        onError={e => { e.target.src = placeholderFor(isSent ? localStorage.getItem('userGender') : activeConv.other_gender); }}
                                       />
                                       <p className="msg-bubble">
                                         {msg.message_type === 'image' ? (
@@ -486,7 +691,18 @@ const userId = Number(localStorage.getItem('userId'));
                           </ul>
                         </div>
 
-                        {/* Input */}
+                        {/* Input (replaced by a banner while blocked either way) */}
+                        {blockStatus.iBlocked ? (
+                          <div className="msg-composer msg-composer--blocked">
+                            <span><i className="fa fa-ban" aria-hidden="true"></i> You have blocked this user.</span>
+                            <button type="button" className="msg-unblock-btn"
+                              onClick={handleUnblockFromChat} disabled={blockBusy}>Unblock</button>
+                          </div>
+                        ) : blockStatus.blockedMe ? (
+                          <div className="msg-composer msg-composer--blocked">
+                            <span>You can't reply to this conversation.</span>
+                          </div>
+                        ) : (
                         <div className="msg-composer">
                           <div className="msg-composer__wrap">
                             <i className="fa fa-paperclip msg-composer__clip" aria-hidden="true"></i>
@@ -511,6 +727,7 @@ const userId = Number(localStorage.getItem('userId'));
                             </button>
                           </div>
                         </div>
+                        )}
                       </>
                     )}
                   </div>

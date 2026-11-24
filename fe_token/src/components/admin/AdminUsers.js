@@ -15,14 +15,33 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import adminApi from './adminApi';
+import { useAdminAuth } from './AdminAuthContext';
+import { useToast } from '../hooks/ToastContext';
 import '../../assets/css/pages/admin.css';
 
 const ACCOUNT_STATUSES = ['Pending', 'Active', 'Closed', 'Blocked'];
 const PROFILE_STATUSES = ['pending', 'approved', 'rejected'];
+const PAYMENT_STATUSES = ['Pending', 'Paid', 'Unpaid'];
+const MEMBERSHIP_TYPES = ['Gold', 'Premium', 'Diamond'];
+const MARRIAGE_STATUSES = ['Active', 'Marriage Settled'];
+const FEATURED_OPTIONS = ['No', 'Yes'];
 const LIMIT = 20;
+
+// Admin-editable fields (payment, membership, marriage, featured): row key, request endpoint, label, options.
+const STATUS_FIELDS = [
+  { field: 'payment_status', path: '/adminhub/users/payment-status', label: 'Payment status', options: PAYMENT_STATUSES, fallback: 'Pending' },
+  { field: 'membership_type', path: '/adminhub/users/membership-type', label: 'Membership type', options: MEMBERSHIP_TYPES, fallback: 'Gold' },
+  { field: 'marriage_status', path: '/adminhub/users/marriage-status', label: 'Marriage status', options: MARRIAGE_STATUSES, fallback: 'Active' },
+  { field: 'featured', path: '/adminhub/users/featured', label: 'Featured', options: FEATURED_OPTIONS, fallback: 'No' },
+];
 
 const AdminUsers = () => {
   const navigate = useNavigate();
+  const { can } = useAdminAuth();
+  const canDelete = can('users.delete');
+  const canImpersonate = can('users.impersonate');
+  const columnCount = canDelete ? 13 : 12;
+  const { showToast } = useToast();
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -33,13 +52,24 @@ const AdminUsers = () => {
   // per-row pending dropdown selections
   const [statusDraft, setStatusDraft] = useState({});
   const [profileDraft, setProfileDraft] = useState({});
+  const [fieldDraft, setFieldDraft] = useState({});   // keyed `${uid}:${field}`
+  const [saving, setSaving] = useState({});            // keyed `${uid}:${field}`
+  const [filters, setFilters] = useState({ payment_status: '', membership_type: '', marriage_status: '', featured: '' });
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
       const { data } = await adminApi.get('/adminhub/users', {
-        params: { page, limit: LIMIT, search },
+        params: {
+          page,
+          limit: LIMIT,
+          search,
+          ...(filters.payment_status && { payment_status: filters.payment_status }),
+          ...(filters.membership_type && { membership_type: filters.membership_type }),
+          ...(filters.marriage_status && { marriage_status: filters.marriage_status }),
+          ...(filters.featured && { featured: filters.featured }),
+        },
       });
       if (data.status === 'Success') {
         setRows(data.data.rows || []);
@@ -52,7 +82,7 @@ const AdminUsers = () => {
     } finally {
       setLoading(false);
     }
-  }, [page, search]);
+  }, [page, search, filters]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -107,6 +137,32 @@ const AdminUsers = () => {
     }
   };
 
+  const handleFilterChange = (field, value) => {
+    setPage(1);
+    setFilters((f) => ({ ...f, [field]: value }));
+  };
+
+  const handleFieldUpdate = async (uid, cfg) => {
+    const key = `${uid}:${cfg.field}`;
+    const value = fieldDraft[key];
+    if (!value || saving[key]) return;
+    setSaving((s) => ({ ...s, [key]: true }));
+    try {
+      const { data } = await adminApi.post(cfg.path, { uid, [cfg.field]: value });
+      if (data.status === 'Success') {
+        showToast({ title: 'Updated', description: `${cfg.label} set to ${value}.`, type: 'success' });
+        setFieldDraft((d) => { const n = { ...d }; delete n[key]; return n; });
+        load();
+      } else {
+        showToast({ title: 'Update failed', description: data.result || `${cfg.label} update failed.`, type: 'error' });
+      }
+    } catch (err) {
+      showToast({ title: 'Update failed', description: `${cfg.label} update failed.`, type: 'error' });
+    } finally {
+      setSaving((s) => { const n = { ...s }; delete n[key]; return n; });
+    }
+  };
+
   const handleDelete = async (uid, matId) => {
     if (!window.confirm(`Delete ${matId || 'MAT' + uid}? This removes the user and ALL their photos, conversations and data. This cannot be undone.`)) {
       return;
@@ -152,6 +208,18 @@ const AdminUsers = () => {
             Clear
           </button>
         )}
+        {STATUS_FIELDS.map((cfg) => (
+          <select
+            key={cfg.field}
+            aria-label={`Filter by ${cfg.label.toLowerCase()}`}
+            value={filters[cfg.field]}
+            onChange={(e) => handleFilterChange(cfg.field, e.target.value)}
+            className="adm-select"
+          >
+            <option value="">{cfg.label}: All</option>
+            {cfg.options.map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+        ))}
       </form>
 
       {error && <div className="adm-alert">{error}</div>}
@@ -167,26 +235,35 @@ const AdminUsers = () => {
               <th>Photos</th>
               <th>Account Status</th>
               <th>Profile Approval</th>
-              <th>Delete</th>
+              <th>Payment</th>
+              <th>Membership</th>
+              <th>Marriage</th>
+              <th>Featured</th>
+              <th>Blocks</th>
+              {canDelete && <th>Delete</th>}
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td className="adm-table__state" colSpan={8}>Loading…</td></tr>
+              <tr><td className="adm-table__state" colSpan={columnCount}>Loading…</td></tr>
             ) : rows.length === 0 ? (
-              <tr><td className="adm-table__state" colSpan={8}>No users found.</td></tr>
+              <tr><td className="adm-table__state" colSpan={columnCount}>No users found.</td></tr>
             ) : (
               rows.map((u) => (
                 <tr key={u.uid}>
                   <td>
-                    <button
-                      type="button"
-                      title="Shadow login as this user (opens a new tab)"
-                      onClick={() => handleShadowLogin(u.uid)}
-                      className="adm-link-btn adm-link-btn--mono"
-                    >
-                      {u.matId || `MAT${u.uid}`}
-                    </button>
+                    {canImpersonate ? (
+                      <button
+                        type="button"
+                        title="Shadow login as this user (opens a new tab)"
+                        onClick={() => handleShadowLogin(u.uid)}
+                        className="adm-link-btn adm-link-btn--mono"
+                      >
+                        {u.matId || `MAT${u.uid}`}
+                      </button>
+                    ) : (
+                      <span>{u.matId || `MAT${u.uid}`}</span>
+                    )}
                   </td>
                   <td>{u.name}</td>
                   <td>{u.uemail}</td>
@@ -224,12 +301,42 @@ const AdminUsers = () => {
                       <button type="button" onClick={() => handleProfileUpdate(u.uid)} className="adm-btn adm-btn--dark adm-btn--sm">Update</button>
                     </div>
                   </td>
-                  <td>
-                    <button type="button" onClick={() => handleDelete(u.uid, u.matId)} className="adm-btn adm-btn--danger adm-btn--sm">
-                      <i className="fa-solid fa-trash-can" aria-hidden="true" />
-                      Delete
-                    </button>
-                  </td>
+                  {STATUS_FIELDS.map((cfg) => {
+                    const key = `${u.uid}:${cfg.field}`;
+                    const busy = !!saving[key];
+                    return (
+                      <td key={cfg.field}>
+                        <div className="adm-inline-controls">
+                          <select
+                            value={fieldDraft[key] ?? u[cfg.field] ?? cfg.fallback}
+                            onChange={(e) => setFieldDraft((d) => ({ ...d, [key]: e.target.value }))}
+                            disabled={busy}
+                            aria-label={cfg.label}
+                            className="adm-select"
+                          >
+                            {cfg.options.map((o) => <option key={o} value={o}>{o}</option>)}
+                          </select>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleFieldUpdate(u.uid, cfg)}
+                            className="adm-btn adm-btn--dark adm-btn--sm"
+                          >
+                            {busy ? 'Saving…' : 'Update'}
+                          </button>
+                        </div>
+                      </td>
+                    );
+                  })}
+                  <td>{u.block_count ?? 0}</td>
+                  {canDelete && (
+                    <td>
+                      <button type="button" onClick={() => handleDelete(u.uid, u.matId)} className="adm-btn adm-btn--danger adm-btn--sm">
+                        <i className="fa-solid fa-trash-can" aria-hidden="true" />
+                        Delete
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))
             )}

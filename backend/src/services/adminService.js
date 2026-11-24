@@ -33,6 +33,24 @@ async function findAdminByIdentifier(identifier) {
   }
 }
 
+// Current admin row by primary key (used to read the live role).
+async function getAdminById(id) {
+  const adminId = Number(id);
+  if (!Number.isInteger(adminId)) return null;
+  const client = await pool.connect();
+  try {
+    const { rows } = await client.query(
+      `SELECT id, username, email, name, role
+         FROM public.adminlogin
+        WHERE id = $1`,
+      [adminId]
+    );
+    return rows[0] || null;
+  } finally {
+    client.release();
+  }
+}
+
 // ── Dashboard ───────────────────────────────────────────────────────────────
 // Stat counts + four capped lists for the dashboard widgets.
 async function getDashboard() {
@@ -72,7 +90,8 @@ async function getDashboard() {
         `SELECT uid,
                 ('MAT' || uid)                        AS "matId",
                 concat_ws(' ', ufname, ulname)        AS name,
-                uemail, uphone, status, profile_status AS "profileStatus"
+                uemail, uphone, status, profile_status AS "profileStatus",
+                payment_status, membership_type, marriage_status
            FROM public.users
           ORDER BY uid DESC
           LIMIT 10`
@@ -114,7 +133,10 @@ async function listUsers({ page, limit, whereSql, params }) {
              concat_ws(' ', a.ufname, a.ulname)      AS name,
              a.uemail, a.uphone, a.status,
              a.profile_status                        AS "profileStatus",
-             (SELECT count(*) FROM public.usergallery g WHERE g.uid = a.uid) AS photos_count
+             a.payment_status, a.membership_type, a.marriage_status,
+             CASE WHEN a.is_featured THEN 'Yes' ELSE 'No' END AS featured,
+             (SELECT count(*) FROM public.usergallery g WHERE g.uid = a.uid) AS photos_count,
+             (SELECT count(*)::int FROM public.user_blocks ub WHERE ub.blocked_uid = a.uid) AS block_count
         FROM public.users a
         ${whereSql}
         ORDER BY a.uid DESC
@@ -154,6 +176,68 @@ async function setProfileStatus(uid, profileStatus) {
       [uid, profileStatus]
     );
     return rows[0] || null;
+  } finally {
+    client.release();
+  }
+}
+
+// Column names come from this fixed map only; request input is never
+// interpolated into SQL. Returns {uid, from, to} or null if the user is missing.
+const USER_FIELD_COLUMNS = {
+  payment_status: 'payment_status',
+  membership_type: 'membership_type',
+  marriage_status: 'marriage_status'
+};
+
+async function setUserField(uid, field, value) {
+  const column = USER_FIELD_COLUMNS[field];
+  if (!column) throw new Error('Unsupported field.');
+  const client = await pool.connect();
+  try {
+    const cur = await client.query(
+      `SELECT ${column} AS val FROM public.users WHERE uid = $1`,
+      [uid]
+    );
+    if (!cur.rows[0]) return null;
+    const { rows } = await client.query(
+      `UPDATE public.users SET ${column} = $2 WHERE uid = $1 RETURNING uid, ${column} AS val`,
+      [uid, value]
+    );
+    if (!rows[0]) return null;
+    return { uid: rows[0].uid, from: cur.rows[0].val, to: rows[0].val };
+  } finally {
+    client.release();
+  }
+}
+
+// Featured flag ('Yes' / 'No'). Sets is_featured and featured_at together
+// (re-saving Yes on an already featured user keeps the original featured_at).
+// Returns {uid, from, to} as 'Yes'/'No', or null if the user is missing.
+async function setUserFeatured(uid, value) {
+  const on = value === 'Yes';
+  const client = await pool.connect();
+  try {
+    const cur = await client.query(
+      `SELECT is_featured FROM public.users WHERE uid = $1`,
+      [uid]
+    );
+    if (!cur.rows[0]) return null;
+    const { rows } = await client.query(
+      `UPDATE public.users
+          SET is_featured = $2::boolean,
+              featured_at = CASE WHEN $2::boolean
+                                 THEN CASE WHEN is_featured THEN COALESCE(featured_at, NOW()) ELSE NOW() END
+                                 ELSE NULL END
+        WHERE uid = $1
+    RETURNING uid, is_featured`,
+      [uid, on]
+    );
+    if (!rows[0]) return null;
+    return {
+      uid: rows[0].uid,
+      from: cur.rows[0].is_featured ? 'Yes' : 'No',
+      to: rows[0].is_featured ? 'Yes' : 'No'
+    };
   } finally {
     client.release();
   }
@@ -201,10 +285,36 @@ async function listPhotos({ page, limit, whereSql, params }) {
 async function setPhotoStatus(id, status) {
   const client = await pool.connect();
   try {
-    const { rows } = await client.query(
-      `UPDATE public.usergallery SET status = $2 WHERE id = $1 RETURNING id, status`,
-      [id, status]
+    const cur = await client.query(
+      `SELECT status, imagepath, imagepath_medium, imagepath_thumb FROM public.usergallery WHERE id = $1`,
+      [id]
     );
+    const row = cur.rows[0];
+    if (!row) return null;
+
+    if (status !== 'rejected') {
+      // Files of rejected photos are deleted, so they cannot be restored.
+      if (row.status === 'rejected') return { restoreBlocked: true };
+      const { rows } = await client.query(
+        `UPDATE public.usergallery SET status = $2 WHERE id = $1 RETURNING id, status`,
+        [id, status]
+      );
+      return rows[0] || null;
+    }
+
+    // Reject: keep the row (owner still sees "Rejected"), clear the paths and
+    // remove all 3 files from disk once the UPDATE has succeeded.
+    const { rows } = await client.query(
+      `UPDATE public.usergallery
+          SET status = 'rejected', imagepath = NULL, imagepath_medium = NULL, imagepath_thumb = NULL
+        WHERE id = $1 RETURNING id, status`,
+      [id]
+    );
+    try {
+      imageService.deleteImageFiles(row.imagepath, row.imagepath_medium, row.imagepath_thumb);
+    } catch (fileErr) {
+      console.error('setPhotoStatus file cleanup error:', fileErr.message);
+    }
     return rows[0] || null;
   } finally {
     client.release();
@@ -349,6 +459,137 @@ async function setContactViewLimit(value) {
   }
 }
 
+// ── Email OTPs list (read-only) ────────────────────────────────────────────
+// `search` and `status` are always bound as parameters. `status` is checked
+// against a whitelist by the controller. Status is computed with NOW(), the
+// same clock db.verifyOtp uses.
+async function listEmailOtps({ page, limit, search, status }) {
+  const client = await pool.connect();
+  try {
+    const offset = (page - 1) * limit;
+    const params = [];
+    const where = [];
+    if (search) {
+      params.push(`%${search.replace(/[\\%_]/g, '\\$&')}%`);
+      where.push(`email ILIKE $${params.length}`);
+    }
+    const statusSql = `CASE WHEN verified THEN 'verified'
+                            WHEN expires_at < NOW() THEN 'expired'
+                            ELSE 'active' END`;
+    if (status && status !== 'all') {
+      params.push(status);
+      where.push(`${statusSql} = $${params.length}`);
+    }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const limitIdx = params.length + 1;
+    const offsetIdx = params.length + 2;
+
+    const dataQuery = `
+      SELECT id, email, otp, expires_at, verified, created_at,
+             ${statusSql} AS status
+        FROM public.email_otps
+        ${whereSql}
+        ORDER BY created_at DESC NULLS LAST, id DESC
+        LIMIT $${limitIdx} OFFSET $${offsetIdx}`;
+    const countQuery = `SELECT count(*)::int AS total FROM public.email_otps ${whereSql}`;
+
+    const [data, count] = await Promise.all([
+      client.query(dataQuery, params.concat([limit, offset])),
+      client.query(countQuery, params)
+    ]);
+    return { rows: data.rows, total: count.rows[0].total };
+  } finally {
+    client.release();
+  }
+}
+
+// ── Contact Us queries list (read-only) ─────────────────────────────────────
+// `search` and `subject` are always bound as parameters; `subject` is checked
+// against a whitelist by the controller.
+async function listContactQueries({ page, limit, search, subject }) {
+  const client = await pool.connect();
+  try {
+    const offset = (page - 1) * limit;
+    const params = [];
+    const where = [];
+    if (search) {
+      params.push(`%${search.replace(/[\\%_]/g, '\\$&')}%`);
+      const p = `$${params.length}`;
+      where.push(`(name ILIKE ${p} OR email ILIKE ${p} OR phone ILIKE ${p} OR message ILIKE ${p})`);
+    }
+    if (subject) {
+      params.push(subject);
+      where.push(`subject = $${params.length}`);
+    }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const limitIdx = params.length + 1;
+    const offsetIdx = params.length + 2;
+
+    const dataQuery = `
+      SELECT id, uid, CASE WHEN uid IS NOT NULL THEN 'MAT' || uid END AS "matId",
+             name, email, phone, subject, message, created_at
+        FROM public.contact_queries
+        ${whereSql}
+        ORDER BY created_at DESC NULLS LAST, id DESC
+        LIMIT $${limitIdx} OFFSET $${offsetIdx}`;
+    const countQuery = `SELECT count(*)::int AS total FROM public.contact_queries ${whereSql}`;
+
+    const [data, count] = await Promise.all([
+      client.query(dataQuery, params.concat([limit, offset])),
+      client.query(countQuery, params)
+    ]);
+    return { rows: data.rows, total: count.rows[0].total };
+  } finally {
+    client.release();
+  }
+}
+
+// ── Blocked users list (read-only) ──────────────────────────────────────────
+// One row per blocked user: how many users blocked them and who (blocker uids,
+// ascending, comma separated). whereSql/params come from buildUserWhere (alias
+// `a`) and are shared verbatim by the data and count queries.
+async function listBlockedUsers({ page, limit, whereSql, params }) {
+  const client = await pool.connect();
+  try {
+    const offset = (page - 1) * limit;
+    const limitIdx = params.length + 1;
+    const offsetIdx = params.length + 2;
+
+    const dataQuery = `
+      SELECT a.uid,
+             ('MAT' || a.uid)                   AS "matId",
+             concat_ws(' ', a.ufname, a.ulname) AS name,
+             a.uemail,
+             b.block_count, b.blocked_by_ids, b.latest_blocked_at
+        FROM public.users a
+        JOIN (
+          SELECT blocked_uid,
+                 count(*)::int AS block_count,
+                 string_agg(blocker_uid::text, ', ' ORDER BY blocker_uid) AS blocked_by_ids,
+                 max(created_at) AS latest_blocked_at
+            FROM public.user_blocks
+           GROUP BY blocked_uid
+        ) b ON b.blocked_uid = a.uid
+        ${whereSql}
+        ORDER BY b.block_count DESC, b.latest_blocked_at DESC NULLS LAST, a.uid DESC
+        LIMIT $${limitIdx} OFFSET $${offsetIdx}`;
+
+    const countQuery = `
+      SELECT count(*)::int AS total
+        FROM public.users a
+        JOIN (SELECT DISTINCT blocked_uid FROM public.user_blocks) b ON b.blocked_uid = a.uid
+        ${whereSql}`;
+
+    const [data, count] = await Promise.all([
+      client.query(dataQuery, params.concat([limit, offset])),
+      client.query(countQuery, params)
+    ]);
+    return { rows: data.rows, total: count.rows[0].total };
+  } finally {
+    client.release();
+  }
+}
+
 // ── Audit log ──────────────────────────────────────────────────────────────
 async function writeAudit({ adminId, action, targetUid, details }) {
   const client = await pool.connect();
@@ -366,7 +607,8 @@ async function writeAudit({ adminId, action, targetUid, details }) {
 // ── Cascade hard-delete ──────────────────────────────────────────────────────
 // Transactional. Deletes the user and everything tied to them. Tables with an
 // ON DELETE CASCADE FK to users(uid) (conversations, messages, proposals,
-// proposal_responses, contact_views, admin_impersonation_tokens) are handled by
+// proposal_responses, contact_views, admin_impersonation_tokens, user_blocks)
+// are handled by
 // the final DELETE FROM users. usergallery.uid and userdetails.uid have NO FK,
 // so they are deleted explicitly inside the transaction. Image files are removed
 // best-effort (failures logged, NOT fatal, NOT rolled back).
@@ -416,15 +658,21 @@ async function deleteUserCascade(uid, adminId) {
 
 module.exports = {
   findAdminByIdentifier,
+  getAdminById,
   getDashboard,
   listUsers,
   setUserStatus,
   setProfileStatus,
+  setUserField,
+  setUserFeatured,
   listPhotos,
   setPhotoStatus,
   listFlaggedSenders,
   createImpersonationToken,
   writeAudit,
+  listEmailOtps,
+  listContactQueries,
+  listBlockedUsers,
   deleteUserCascade,
   getContactViewLimit,
   setContactViewLimit

@@ -45,6 +45,7 @@ const getNotifications = async (receiverId) => {
              FROM proposals p
              JOIN users u ON u.uid = p.sender_id
              WHERE p.receiver_id = $1
+               AND NOT EXISTS (SELECT 1 FROM public.user_blocks ub WHERE ub.blocker_uid = p.sender_id AND ub.blocked_uid = $1)
              ORDER BY p.created_at DESC`,
             [receiverId]
         );
@@ -150,7 +151,9 @@ const getUnreadCount = async (receiverId) => {
     const client = await pool.connect();
     try {
         const result = await client.query(
-            `SELECT COUNT(*) AS count FROM proposals WHERE receiver_id = $1 AND is_read = false`,
+            `SELECT COUNT(*) AS count FROM proposals p
+             WHERE p.receiver_id = $1 AND p.is_read = false
+               AND NOT EXISTS (SELECT 1 FROM public.user_blocks ub WHERE ub.blocker_uid = p.sender_id AND ub.blocked_uid = $1)`,
             [receiverId]
         );
         return parseInt(result.rows[0].count, 10);
@@ -179,6 +182,7 @@ const getSentProposals = async (senderId) => {
              FROM proposals p
              JOIN users u ON u.uid = p.receiver_id
              WHERE p.sender_id = $1
+               AND NOT EXISTS (SELECT 1 FROM public.user_blocks ub WHERE ub.blocker_uid = p.receiver_id AND ub.blocked_uid = $1)
              ORDER BY p.created_at DESC`,
             [senderId]
         );
@@ -218,6 +222,7 @@ const getSenderNotifications = async (senderId) => {
              FROM proposal_responses pr
              JOIN users u ON u.uid = pr.receiver_id
              WHERE pr.sender_id = $1
+               AND NOT EXISTS (SELECT 1 FROM public.user_blocks ub WHERE ub.blocker_uid = pr.receiver_id AND ub.blocked_uid = $1)
              ORDER BY pr.created_at DESC`,
             [senderId]
         );

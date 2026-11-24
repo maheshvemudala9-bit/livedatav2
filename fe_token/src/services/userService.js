@@ -8,6 +8,12 @@ export const getAllUsers = async (page, limit, gender = null) => {
   return await api.get(`/getAllUsers?page=${page}&limit=${limit}${genderQuery}`);
 };
 
+// GET /api/getFeaturedProfiles  (public; opposite-gender only when logged in)
+// -> { status, data: { brides: [...], grooms: [...] } }
+export const getFeaturedProfiles = async () => {
+  return await api.get('/getFeaturedProfiles');
+};
+
 // POST /api/getUserById   body: { id }
 export const getUserById = async (id) => {
   return await api.post('/getUserById', { id });
@@ -16,6 +22,12 @@ export const getUserById = async (id) => {
 // POST /api/FetchUserDetails   body: { uid }
 export const fetchUserDetails = async (userId) => {
   return await api.post('/FetchUserDetails', { uid: userId });
+};
+
+// GET /api/getMyPackage  (uid from cookie)
+// -> { status, data: { membershipType, contactLimitPerDay, contactsUsedToday } }
+export const getMyPackage = async () => {
+  return await api.get('/getMyPackage');
 };
 
 // POST /api/GetUserGallery   body: { uid }
@@ -65,6 +77,29 @@ export const getUserRecords = async () => {
 // Internal function: getUserMobile in dbController.js (hidden)
 export const getUserContactInfo = async (uid) => {
   return await api.post('/getContactInfo', { uid: Number(uid) });
+};
+
+// POST /api/contactUs   body: { name, email, phone, subject, message, website }
+// Public — no login needed (cookie, if present, lets the server record the uid).
+export const submitContactQuery = async (payload) => {
+  return await api.post('/contactUs', payload);
+};
+
+// ─── Block / Unblock ─────────────────────────────────────────────────────────
+// The blocker is always the logged-in user (taken from the cookie by the server).
+// POST /api/blockUser      body: { targetUid }
+export const blockUser = async (targetUid) => {
+  return await api.post('/blockUser', { targetUid: Number(targetUid) });
+};
+
+// POST /api/unblockUser    body: { targetUid }
+export const unblockUser = async (targetUid) => {
+  return await api.post('/unblockUser', { targetUid: Number(targetUid) });
+};
+
+// POST /api/getBlockStatus body: { targetUid }  -> { data: { iBlocked, blockedMe } }
+export const getBlockStatus = async (targetUid) => {
+  return await api.post('/getBlockStatus', { targetUid: Number(targetUid) });
 };
 
 // POST /api/changePassword

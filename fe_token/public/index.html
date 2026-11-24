@@ -2,13 +2,32 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+    <!-- Favicons: Google Search needs a square size that is a multiple of 48px. -->
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" sizes="48x48" />
+    <link rel="icon" href="%PUBLIC_URL%/favicon-48.png" type="image/png" sizes="48x48" />
+    <link rel="icon" href="%PUBLIC_URL%/favicon-96.png" type="image/png" sizes="96x96" />
+    <link rel="icon" href="%PUBLIC_URL%/favicon-144.png" type="image/png" sizes="144x144" />
+    <link rel="icon" href="%PUBLIC_URL%/logo192.png" type="image/png" sizes="192x192" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#000000" />
-    <meta
-      name="description"
-      content="Web site created using create-react-app"
-    />
+    <meta name="theme-color" content="#a84040" />
+    <!-- Tags marked data-rh="true" are the home-page defaults. react-helmet-async
+         replaces them on the client and scripts/seo-postbuild.js replaces them per route. -->
+    <meta data-rh="true" name="description" content="TeluguSambandham is a family-oriented Telugu matrimony service in Hyderabad. Register free and browse verified profiles from Telangana and Andhra Pradesh." />
+    <meta data-rh="true" name="robots" content="index, follow" />
+    <link data-rh="true" rel="canonical" href="https://telugusambandham.com/" />
+    <meta data-rh="true" property="og:type" content="website" />
+    <meta data-rh="true" property="og:site_name" content="TeluguSambandham" />
+    <meta data-rh="true" property="og:title" content="Telugu Matrimony – Telugu Brides &amp; Grooms | TeluguSambandham" />
+    <meta data-rh="true" property="og:description" content="TeluguSambandham is a family-oriented Telugu matrimony service in Hyderabad. Register free and browse verified profiles from Telangana and Andhra Pradesh." />
+    <meta data-rh="true" property="og:url" content="https://telugusambandham.com/" />
+    <meta data-rh="true" property="og:image" content="https://telugusambandham.com/og-image.png" />
+    <meta data-rh="true" property="og:locale" content="en_IN" />
+    <meta data-rh="true" name="twitter:card" content="summary_large_image" />
+    <meta data-rh="true" name="twitter:title" content="Telugu Matrimony – Telugu Brides &amp; Grooms | TeluguSambandham" />
+    <meta data-rh="true" name="twitter:description" content="TeluguSambandham is a family-oriented Telugu matrimony service in Hyderabad. Register free and browse verified profiles from Telangana and Andhra Pradesh." />
+    <meta data-rh="true" name="twitter:image" content="https://telugusambandham.com/og-image.png" />
+    <script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"Organization","name":"TeluguSambandham","url":"https://telugusambandham.com/","logo":"https://telugusambandham.com/logo512.png","email":"support@telugusambandham.com","address":{"@type":"PostalAddress","streetAddress":"Kukatpally & Alwal","addressLocality":"Hyderabad","addressRegion":"Telangana","addressCountry":"IN"},"contactPoint":{"@type":"ContactPoint","contactType":"customer support","email":"support@telugusambandham.com","areaServed":"IN","availableLanguage":"English"}}</script>
+    <script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"WebSite","name":"TeluguSambandham","url":"https://telugusambandham.com/"}</script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -16,13 +35,16 @@
       rel="stylesheet"
     />
     <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="TeluguSambandham" />
    
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
     
-    <title>Telugu Sambandham</title>
+    <title data-rh="true">Telugu Matrimony – Telugu Brides &amp; Grooms | TeluguSambandham</title>
   </head>
   <body>
-    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <noscript>TeluguSambandham is a Telugu matrimony service for Telugu brides and grooms. Please enable JavaScript to use the site. Need help? Email support@telugusambandham.com.</noscript>
     <div id="root"></div>
   
   </body>

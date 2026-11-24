@@ -34,6 +34,13 @@
   margin-bottom: 26px;
 }
 
+.adm-login__logo {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: 56px;
+}
+
 .adm-login__icon {
   display: inline-flex;
   align-items: center;

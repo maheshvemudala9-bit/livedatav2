@@ -181,6 +181,7 @@
 
 /* ── Results column ────────────────────────────────────────────────────────── */
 .lst-results {
+  scroll-margin-top: 96px;
   min-width: 0;
 }
 
@@ -274,6 +275,62 @@
   font-size: 14px;
   color: var(--muted);
 }
+
+/* ── Contact-lock notes + badges ───────────────────────────────────────────── */
+.lst-note,
+.lst-legend {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+  background: var(--brand-50);
+  border: 1px solid var(--brand-100);
+  border-radius: var(--radius-sm);
+}
+
+.lst-note i,
+.lst-legend i {
+  margin-top: 3px;
+  color: var(--brand-700);
+}
+
+.lst-legend { display: block; }
+.lst-legend i { margin-right: 2px; }
+
+.lst-note a,
+.lst-legend a {
+  color: var(--brand-700);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.lst-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 6px 0 2px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.lst-lock i { font-size: 11px; }
+
+.lst-lock--premium { color: #4338ca; background: #e0e7ff; border-color: #c7d2fe; }
+.lst-lock--diamond { color: #0e7490; background: #cffafe; border-color: #a5f3fc; }
+.lst-lock--settled { color: var(--ink-soft); background: var(--canvas); border-color: var(--line); }
+
+/* Faint outline on locked cards (still fully clickable) */
+.lst-card--locked { border-color: #e4e2ee; }
 
 /* ── Profile cards ─────────────────────────────────────────────────────────── */
 .lst-grid {

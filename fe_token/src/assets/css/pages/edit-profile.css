@@ -260,11 +260,14 @@
     column-gap: 24px;
   }
 
+  /* Desktop: avatar centred with "Personal Information" centred below it
+     (same stacked layout as mobile, just larger). */
   .ep-card__head--profile {
-    flex-direction: row;
-    justify-content: flex-start;
-    text-align: left;
-    gap: 24px;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    gap: 16px;
   }
 
   .ep-card__head--profile h3 {

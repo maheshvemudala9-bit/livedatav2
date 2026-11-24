@@ -4,8 +4,9 @@
 // This file received a full visual redesign (grouped card/section layout,
 // restyled inputs). ALL logic is preserved from the previous version:
 // the same field `name` attributes, the same validate() rules, the same
-// OTP send/verify/resend flow, the same salary handling, and the same
-// show/hide password behavior. No backend contract changed.
+// OTP send/verify/resend flow and the same show/hide password behavior.
+// Employed In / Salary Amount / Salary Unit were added to the register
+// payload (see backend migration 015_employment_salary.sql).
 //
 // BEHAVIOR FIX (intentional, 2 lines): previously the formatted date/time of
 // birth were written to dataObj.date / dataObj.time, but the backend inserts
@@ -19,19 +20,32 @@ import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import '../../../assets/css/pages/signup.css';
 import jsonArr from '../../templates/data/jsonData';
+import LocationCascade from '../../common/LocationCascade';
+import { formatPlace, INDIA } from '../../../data/locations';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from '../../hooks/AuthContext';
 import { registerUser, sendOtp, verifyOtp } from '../../../services/authService';
 import { useToast } from '../../../components/hooks/ToastContext';
 import { toTitleCase } from '../../../utils/normalizeText';
+import GroupedRadioSelect from '../../common/GroupedRadioSelect';
+import { JOB_GROUPS } from '../../../data/educationJob';
 
-// Salary unit options
-const inrOptions = [
-  { label: "Thousands", value: "thousands" },
-  { label: "Lakhs",     value: "lakhs"     },
-  { label: "Crores",    value: "crores"    }
-];
+// Employment / salary options
+const EMPLOYED_IN     = ['Government', 'Private', 'Defense', 'Self Employed', 'Business', 'Not Working'];
+const SALARY_UNITS    = ['Thousands', 'Lakhs', 'Crores']; // amount is per annum
+const PRIORITY_STATES = ['Telangana', 'Andhra Pradesh'];
+const NOT_WORKING     = 'Not Working';
+
+// Legacy users.upackage text ("<n> Lakhs", or "NA"), kept so search and cards keep working.
+const toPackage = (amount, unit, employedIn) => {
+  if (employedIn === NOT_WORKING || amount === '' || isNaN(Number(amount))) return 'NA';
+  // e.g. "12 Lakhs", "1.3 Crores", "50 Thousands" (the income search parses these words).
+  return `${Number(amount)} ${unit}`;
+};
+
+// Green note under the salary inputs, e.g. "12 Lakhs per Annum".
+const salaryText = (amount, unit) => `${Number(amount)} ${unit} per Annum`;
 
 // ── Presentation helper: shared input class + error modifier ──────────────
 const fieldClass = (hasError) => (hasError ? 'form-control sg-field--error' : 'form-control');
@@ -54,10 +68,10 @@ const Signup = (props) => {
   const [startTime,    setStartTime]    = useState(new Date());
 
   // ── Salary state ──────────────────────────────────────────────────────────
-  const [salaryNum,     setSalaryNum]     = useState("");
-  const [salaryUnits,   setSalaryUnits]   = useState("Lakhs");
-  const [salaryMessage, setSalaryMessage] = useState("");
-  const [salaryPackage, setSalaryPackage] = useState("NA");
+  const [employedIn, setEmployedIn] = useState("");
+  const [job,        setJob]        = useState("");
+  const [salaryNum,  setSalaryNum]  = useState("");
+  const [salaryUnit, setSalaryUnit] = useState("Lakhs");
 
   // ── OTP state ─────────────────────────────────────────────────────────────
   const [showOtpModal,    setShowOtpModal]    = useState(false);
@@ -70,6 +84,8 @@ const Signup = (props) => {
   const [pendingFormData, setPendingFormData] = useState(null);
   const [sendingOtp,      setSendingOtp]      = useState(false); // spinner while OTP email is sent
 
+  const [presentLoc, setPresentLoc] = useState({ country: INDIA, state: '', district: '' });
+  const [pobLoc,     setPobLoc]     = useState({ country: INDIA, state: '', district: '' });
   const [showPassword,        setShowPassword]        = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
@@ -79,28 +95,27 @@ const Signup = (props) => {
     setShowDropdown(value === "relationship");
   };
 
+  const clearErrors = (...keys) =>
+    setErrors((prev) => { const next = { ...prev }; keys.forEach((k) => delete next[k]); return next; });
+
+  const handleEmployedInChange = (event) => {
+    const value = event.target.value;
+    if (value === NOT_WORKING) {
+      setJob(NOT_WORKING);
+      setSalaryNum("0");
+    } else if (employedIn === NOT_WORKING) {
+      setJob("");
+      setSalaryNum("");
+    }
+    setEmployedIn(value);
+    clearErrors("employedIn", "ujob", "salary");
+  };
+
   const handleSalaryNumChange = (event) => {
     const value = event.target.value;
-    if (/^\d*\.?\d*$/.test(value)) {
+    if (/^\d*\.?\d{0,2}$/.test(value)) {
       setSalaryNum(value);
-      updateSalaryMessage(value, salaryUnits);
-    }
-  };
-
-  const handleSalaryUnitsChange = (event) => {
-    const value = event.target.value;
-    setSalaryUnits(value);
-    updateSalaryMessage(salaryNum, value);
-  };
-
-  const updateSalaryMessage = (num, units) => {
-    if (num && units) {
-      const packageValue = `${num} ${units}`;
-      setSalaryPackage(packageValue);
-      setSalaryMessage(`** ${num} ${units} per Annum`);
-    } else {
-      setSalaryPackage("NA");
-      setSalaryMessage("");
+      clearErrors("salary");
     }
   };
 
@@ -122,20 +137,24 @@ const Signup = (props) => {
     } else if (requiredFieldsData.upassword !== requiredFieldsData["confirm-password"]) {
       errors["confirm-password"] = "Passwords do not match";
     }
-    if (!requiredFieldsData["ufname"])   { errors["ufname"] = "First Name is required"; }
-    if (!requiredFieldsData["ulname"])   { errors["ulname"] = "Last Name is required"; }
+    if (!requiredFieldsData["ufname"])   { errors["ufname"] = "Surname is required"; }
+    if (!requiredFieldsData["ulname"])   { errors["ulname"] = "Name is required"; }
     if (!requiredFieldsData["ucreated"]) { errors["ucreated"] = " * Please select a profile option."; }
     if (requiredFieldsData["relation"] === "Select Relation") { errors["relation"] = "Relation is required"; }
     if (!requiredFieldsData["udob"])     { errors["udob"] = "Date of birth is required"; }
     if (!requiredFieldsData["utob"])     { errors["utob"] = "Time of birth is required"; }
     if (requiredFieldsData["ugender"] === "Select Gender")       { errors["ugender"] = "Gender is required"; }
-    if (requiredFieldsData["upob"] === "Select birth place")     { errors["upob"] = "Place of birth is required"; }
-    if (requiredFieldsData["upresentloc"] === "Select District") { errors["upresentloc"] = "Present Location is required"; }
+    if (!pobLoc.district)                                        { errors["upob"] = "Place of birth is required"; }
+    // Work location: only Country is mandatory; State and City / Place of Work are optional.
+    if (!presentLoc.country)                                     { errors["ucountry"] = "Country of Work is required"; }
     if (!requiredFieldsData["uphone"])   { errors["uphone"] = "Phone is required"; }
     if (requiredFieldsData["uheight"] === "Select Height") { errors["uheight"] = "Height is required"; }
     if (requiredFieldsData["ucaste"] === "Select Caste")   { errors["ucaste"] = "Caste is required"; }
-    if (requiredFieldsData["ujob"] === "Select Job")       { errors["ujob"] = "Job is required"; }
-    if (!salaryNum) { errors["salary"] = "Salary amount is required"; }
+    if (!employedIn) { errors["employedIn"] = "Employed In is required"; }
+    if (!job)        { errors["ujob"] = "Profession is required"; }
+    if (salaryNum !== "" && (!/^\d+(\.\d{1,2})?$/.test(salaryNum) || Number(salaryNum) < 0)) {
+      errors["salary"] = "Enter a valid amount (0 or more)";
+    }
     if (!requiredFieldsData.terms) { errors.terms = "* You must agree to the terms and conditions."; }
     setErrors(errors);
     return errors;
@@ -152,7 +171,17 @@ const Signup = (props) => {
           dataObj.udob     = format(startDate, "MM/dd/yyyy");
           dataObj.utob     = format(startTime, "HH:mm");
           // ─────────────────────────────────────────────────────────────────────
-          dataObj.upackage = salaryPackage;
+          // Employment values come from state (not FormData) so disabled controls still submit.
+          dataObj.ujob          = job;
+          dataObj.employed_in   = employedIn;
+          dataObj.salary_amount = employedIn === NOT_WORKING ? '0' : salaryNum;
+          dataObj.salary_unit   = salaryUnit;
+          dataObj.upackage      = toPackage(dataObj.salary_amount, salaryUnit, employedIn);
+          // Location cascades (country > state > district): plain names, place of birth as "District, State, Country".
+          dataObj.ucountry    = presentLoc.country;
+          dataObj.ustate      = presentLoc.state;
+          dataObj.upresentloc = presentLoc.district;
+          dataObj.upob        = formatPlace(pobLoc);
 
     const givendob      = new Date(dataObj.date).getFullYear();
     const curyear       = new Date().getFullYear();
@@ -310,7 +339,7 @@ const Signup = (props) => {
               <div className="sg-hero__icon" aria-hidden="true">
                 <i className="fas fa-user-plus"></i>
               </div>
-              <h4 className="sg-hero__title">Create an Account</h4>
+              <h1 className="sg-hero__title">Create an Account</h1>
               <p className="sg-hero__sub">Only for Telangana &amp; Andhra Pradesh States</p>
             </div>
 
@@ -319,7 +348,7 @@ const Signup = (props) => {
 
                 {/* ── Profile Type ──────────────────────────────────────── */}
                 <div className="sg-section">
-                  <h5 className="sg-section__title">Profile Type</h5>
+                  <h2 className="sg-section__title">Profile Type</h2>
                   <div className="sg-choices">
                     <label className="sg-choice">
                       <input type="radio" value="myself" name="ucreated" onChange={handleRadioChange} />
@@ -346,15 +375,15 @@ const Signup = (props) => {
 
                 {/* ── Personal Details ──────────────────────────────────── */}
                 <div className="sg-section">
-                  <h5 className="sg-section__title">Personal Details</h5>
+                  <h2 className="sg-section__title">Personal Details</h2>
                   <div className="sg-grid">
                     <div className="sg-col">
-                      <label className="sg-label">First Name</label>
-                      <input type="text" name="ufname" placeholder="Name" className={fieldClass(errors.ufname)} />
+                      <label className="sg-label">Surname</label>
+                      <input type="text" name="ufname" placeholder="Surname" className={fieldClass(errors.ufname)} />
                       {errors.ufname && <span className="sg-error">{errors.ufname}</span>}
                     </div>
                     <div className="sg-col">
-                      <label className="sg-label">Last Name</label>
+                      <label className="sg-label">Name</label>
                       <input type="text" name="ulname" placeholder="Name" className={fieldClass(errors.ulname)} />
                       {errors.ulname && <span className="sg-error">{errors.ulname}</span>}
                     </div>
@@ -390,7 +419,7 @@ const Signup = (props) => {
 
                 {/* ── Birth Details ─────────────────────────────────────── */}
                 <div className="sg-section">
-                  <h5 className="sg-section__title">Birth Details</h5>
+                  <h2 className="sg-section__title">Birth Details</h2>
                   <div className="sg-grid">
                     <div className="sg-col">
                       <label className="sg-label">Date of birth</label>
@@ -416,43 +445,83 @@ const Signup = (props) => {
                       />
                       {errors.utob && <span className="sg-error">{errors.utob}</span>}
                     </div>
-                    <div className="sg-col">
-                      <label className="sg-label">Place of birth</label>
-                      <select name="upob" className={fieldClass(errors.upob)}>
-                        <option>Select birth place</option>
-                        {jsonArr.districtData.map((res, i) => <option key={i} value={res.districtlabel}>{res.districtlabel}</option>)}
-                      </select>
-                      {errors.upob && <span className="sg-error">{errors.upob}</span>}
-                    </div>
+                    <LocationCascade
+                      variant="native"
+                      idPrefix="sg-pob"
+                      fieldClassName="sg-col"
+                      labels={{ country: 'Country of Birth', state: 'State', district: 'City / Place of Birth', stateText: 'State / Province', cityText: 'City / Place of Birth' }}
+                      priorityStates={PRIORITY_STATES}
+                      value={pobLoc}
+                      onChange={setPobLoc}
+                      error={errors.upob}
+                      errorClassName="sg-error"
+                      required
+                    />
                   </div>
                 </div>
 
-                {/* ── Location ──────────────────────────────────────────── */}
+                {/* ── Professional Information ──────────────────────────────────────────── */}
                 <div className="sg-section">
-                  <h5 className="sg-section__title">Job Location</h5>
+                  <h2 className="sg-section__title">Professional Information</h2>
+                  <div className="sg-grid sg-grid--emp">
+                    <div className="sg-col">
+                      <label className="sg-label">Employed In</label>
+                      <select value={employedIn} onChange={handleEmployedInChange} className={fieldClass(errors.employedIn)}>
+                        <option value="">Select Employed In</option>
+                        {EMPLOYED_IN.map((o) => <option key={o} value={o}>{o}</option>)}
+                      </select>
+                      {errors.employedIn && <span className="sg-error">{errors.employedIn}</span>}
+                    </div>
+                    <div className="sg-col">
+                      <label className="sg-label">Profession</label>
+                      {/* GroupedRadioSelect has no disabled prop: lock it while Not Working */}
+                      <div
+                        style={employedIn === NOT_WORKING ? { pointerEvents: 'none', opacity: 0.7 } : undefined}
+                        aria-disabled={employedIn === NOT_WORKING}
+                      >
+                        <GroupedRadioSelect name="ujob" variant="form" value={job} onChange={(v) => { if (employedIn !== NOT_WORKING) setJob(v); }} placeholder="Select Profession" title="Select Profession" groups={JOB_GROUPS} hasError={!!errors.ujob} />
+                      </div>
+                      {errors.ujob && <span className="sg-error">{errors.ujob}</span>}
+                    </div>
+                    <div className="sg-col">
+                      <label className="sg-label">Salary Amount</label>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={salaryNum}
+                        onChange={handleSalaryNumChange}
+                        disabled={employedIn === NOT_WORKING}
+                        placeholder="e.g. 5, 10.5"
+                        className={fieldClass(errors.salary)}
+                      />
+                      {errors.salary && <span className="sg-error">{errors.salary}</span>}
+                    </div>
+                    <div className="sg-col">
+                      <label className="sg-label">Salary Unit</label>
+                      <select value={salaryUnit} onChange={(e) => setSalaryUnit(e.target.value)} disabled={employedIn === NOT_WORKING} className="form-control">
+                        {SALARY_UNITS.map((o) => <option key={o} value={o}>{o}</option>)}
+                      </select>
+                    </div>
+                    {employedIn !== NOT_WORKING && /^\d+(\.\d{1,2})?$/.test(salaryNum) && (
+                      <div className="sg-col sg-col--full">
+                        <p className="sg-salary-note" aria-live="polite">** {salaryText(salaryNum, salaryUnit)}</p>
+                      </div>
+                    )}
+                  </div>
                   <div className="sg-grid">
-                    <div className="sg-col">
-                      <label className="sg-label">Country</label>
-                      <select name="ucountry" className="form-control">
-                        <option>Select Country</option>
-                        {jsonArr.countries.map((res, i) => <option key={i} value={res.country}>{res.country}</option>)}
-                      </select>
-                    </div>
-                    <div className="sg-col">
-                      <label className="sg-label">State</label>
-                      <select name="ustate" className="form-control">
-                        <option>Select State</option>
-                        {jsonArr.states.map((res, i) => <option key={i} value={res.state}>{res.state}</option>)}
-                      </select>
-                    </div>
-                    <div className="sg-col">
-                      <label className="sg-label">City/Current Location</label>
-                      <select name="upresentloc" className={fieldClass(errors.upresentloc)}>
-                        <option>Select District</option>
-                        {jsonArr.districtData.map((res, i) => <option key={i} value={res.districtlabel}>{res.districtlabel}</option>)}
-                      </select>
-                      {errors.upresentloc && <span className="sg-error">{errors.upresentloc}</span>}
-                    </div>
+                    <LocationCascade
+                      variant="native"
+                      idPrefix="sg-loc"
+                      fieldClassName="sg-col"
+                      labels={{ country: 'Country of Work', state: 'State', district: 'City / Place of Work', stateText: 'State / Province', cityText: 'City / Place of Work' }}
+                      priorityStates={PRIORITY_STATES}
+                      value={presentLoc}
+                      onChange={setPresentLoc}
+                      countryError={errors.ucountry}
+                      errorClassName="sg-error"
+                      required
+                      districtRequired={false}
+                    />
                     <div className="sg-col">
                       <label className="sg-label">Phone</label>
                       <input type="text" name="uphone" placeholder="e.g. 9999999999" className={fieldClass(errors.uphone)} />
@@ -463,7 +532,7 @@ const Signup = (props) => {
 
                 {/* ── Contact & Security ────────────────────────────────── */}
                 <div className="sg-section">
-                  <h5 className="sg-section__title">Contact &amp; Security</h5>
+                  <h2 className="sg-section__title">Contact &amp; Security</h2>
                   <div className="sg-grid">
                     <div className="sg-col sg-col--full">
                       <label className="sg-label">Email</label>
@@ -515,56 +584,11 @@ const Signup = (props) => {
                   </div>
                 </div>
 
-                {/* ── Professional ──────────────────────────────────────── */}
-                <div className="sg-section">
-                  <h5 className="sg-section__title">Professional</h5>
-                  <div className="sg-grid sg-grid--pro">
-                    <div className="sg-col sg-col--job">
-                      <label className="sg-label">Job</label>
-                      <select name="ujob" className={fieldClass(errors.ujob)}>
-                        <option>Select Job</option>
-                        {jsonArr.occupationData.map((res, i) => <option key={i} value={res.occupation}>{res.occupation}</option>)}
-                      </select>
-                      {errors.ujob && <span className="sg-error">{errors.ujob}</span>}
-                    </div>
-                    <div className="sg-col">
-                      <label className="sg-label">Salary Amount</label>
-                      <input
-                        type="text"
-                        value={salaryNum}
-                        onChange={handleSalaryNumChange}
-                        placeholder="e.g. 5, 10.5"
-                        className={fieldClass(errors.salary)}
-                      />
-                      {errors.salary && <span className="sg-error">{errors.salary}</span>}
-                    </div>
-                    <div className="sg-col">
-                      <label className="sg-label">Salary Unit</label>
-                      <select value={salaryUnits} onChange={handleSalaryUnitsChange} className="form-control">
-                        {inrOptions.map((option, i) => (
-                          <option key={i} value={option.label}>{option.label}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {salaryMessage && (
-                      <div className="sg-col sg-col--full">
-                        <p className="sg-salary-note">
-                          {salaryMessage}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Hidden salary field (preserved) */}
-                  <input type="hidden" name="salaryPackage" value={salaryPackage} />
-                </div>
-
                 {/* ── Terms ─────────────────────────────────────────────── */}
                 <div className="sg-section">
                   <label className="sg-terms">
                     <input type="checkbox" name="terms" id="termscond" />
-                    <span>I have read and agree to <a href="#">Terms &amp; Conditions</a> mentioned on this link</span>
+                    <span>I have read and agree to <a href="/terms-and-conditions" target="_blank" rel="noopener noreferrer">Terms &amp; Conditions</a> mentioned on this link</span>
                   </label>
                   {errors.terms && <span className="sg-error">{errors.terms}</span>}
                 </div>

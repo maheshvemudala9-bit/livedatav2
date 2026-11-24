@@ -1,15 +1,33 @@
  
 
 const proposalService = require('../services/proposal');
+const blocks = require('../services/blocks');
+
+// The acting user is the authenticated user; a different id in the body is
+// rejected (403) so a spoofed id cannot bypass a block. True if 403 was sent.
+const rejectSpoofedId = (req, res, bodyId) => {
+    if (bodyId != null && bodyId !== '' && Number(bodyId) !== Number(req.user.uid)) {
+        res.status(403).json({ status: 'Failure', result: 'Not allowed.' });
+        return true;
+    }
+    return false;
+};
 
 // ─── Send Proposal ────────────────────────────────────────────────────────────
 exports.sendProposal = async (req, res) => {
     try {
-        const { sender_id, receiver_id } = req.body;
+        const { sender_id: bodySenderId, receiver_id } = req.body;
+        if (rejectSpoofedId(req, res, bodySenderId)) return;
+        const sender_id = req.user.uid;
         if (!sender_id || !receiver_id)
             return res.status(400).json({ status: 'Failure', result: 'sender_id and receiver_id are required.' });
-        if (sender_id === receiver_id)
+        if (Number(sender_id) === Number(receiver_id))
             return res.status(400).json({ status: 'Failure', result: 'You cannot send a proposal to yourself.' });
+
+        // Blocked in either direction: generic failure, no proposal row created.
+        const rel = await blocks.blockedRelationship(sender_id, receiver_id);
+        if (rel.iBlocked || rel.blockedMe)
+            return res.status(200).json({ status: 'Failure', result: "You can't send a proposal to this user." });
 
         const result = await proposalService.sendProposal(sender_id, receiver_id);
         if (!result.success)
@@ -24,7 +42,8 @@ exports.sendProposal = async (req, res) => {
 // ─── Get Notifications for Receiver/User 1 ────────────────────────────────────
 exports.getNotifications = async (req, res) => {
     try {
-        const { receiver_id } = req.body;
+        if (rejectSpoofedId(req, res, req.body.receiver_id)) return;
+        const receiver_id = req.user.uid;
         if (!receiver_id)
             return res.status(400).json({ status: 'Failure', result: 'receiver_id is required.' });
 
@@ -90,7 +109,8 @@ exports.markNotificationsRead = async (req, res) => {
 // ─── Get Unread Count ─────────────────────────────────────────────────────────
 exports.getUnreadCount = async (req, res) => {
     try {
-        const { receiver_id } = req.body;
+        if (rejectSpoofedId(req, res, req.body.receiver_id)) return;
+        const receiver_id = req.user.uid;
         if (!receiver_id)
             return res.status(400).json({ status: 'Failure', result: 'receiver_id is required.' });
 
@@ -104,7 +124,8 @@ exports.getUnreadCount = async (req, res) => {
 // ─── Get Sent Proposals ───────────────────────────────────────────────────────
 exports.getSentProposals = async (req, res) => {
     try {
-        const { sender_id } = req.body;
+        if (rejectSpoofedId(req, res, req.body.sender_id)) return;
+        const sender_id = req.user.uid;
         if (!sender_id)
             return res.status(400).json({ status: 'Failure', result: 'sender_id is required.' });
 
@@ -118,7 +139,8 @@ exports.getSentProposals = async (req, res) => {
 // ─── Get Sender Notifications/User 2 (responses to my sent proposals) ─────────
 exports.getSenderNotifications = async (req, res) => {
     try {
-        const { sender_id } = req.body;
+        if (rejectSpoofedId(req, res, req.body.sender_id)) return;
+        const sender_id = req.user.uid;
         if (!sender_id)
             return res.status(400).json({ status: 'Failure', result: 'sender_id is required.' });
 

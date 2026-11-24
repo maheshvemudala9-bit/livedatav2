@@ -9,11 +9,13 @@
 import React, { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import adminApi from './adminApi';
+import { AdminAuthContext } from './AdminAuthContext';
 import '../../assets/css/pages/admin.css';
 
 const AdminProtectedRoute = ({ children }) => {
   // 'pending' | 'ok' | 'fail'
   const [authState, setAuthState] = useState('pending');
+  const [admin, setAdmin] = useState(null);
 
   useEffect(() => {
     let active = true;
@@ -22,7 +24,12 @@ const AdminProtectedRoute = ({ children }) => {
       try {
         const { data } = await adminApi.get('/adminhub/me');
         if (!active) return;
-        setAuthState(data.status === 'Success' ? 'ok' : 'fail');
+        if (data.status === 'Success') {
+          setAdmin(data.data || null);
+          setAuthState('ok');
+        } else {
+          setAuthState('fail');
+        }
       } catch (err) {
         // 401 (no interceptor on adminApi) or any error -> not authenticated
         if (active) setAuthState('fail');
@@ -50,7 +57,10 @@ const AdminProtectedRoute = ({ children }) => {
     return <Navigate to="/adminhub/matrimony/login" replace />;
   }
 
-  return children;
+  const permissions = admin?.permissions || [];
+  const value = { admin, can: (permission) => permissions.includes(permission) };
+
+  return <AdminAuthContext.Provider value={value}>{children}</AdminAuthContext.Provider>;
 };
 
 export default AdminProtectedRoute;

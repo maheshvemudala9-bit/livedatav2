@@ -46,13 +46,16 @@ const getExtension = (base64String) => {
 const ORIGINAL_MAX_DIM = 2000;
 
 // ── Watermark ─────────────────────────────────────────────────────────────────
-// A centered text watermark is BAKED into the medium + original images (not the
-// thumb — text is illegible at 300px). Because it's composited into the pixels,
+// A text watermark (horizontally centred, 20% above the bottom edge) is BAKED
+// into the original, medium and thumb images. Because it's composited into the pixels,
 // it appears everywhere the photo is shown (home, matches/listing, profile
 // details, gallery, lightbox) and can't be removed via devtools or by opening
 // the raw file URL. Opacity 0.2 per requirement.
 const WATERMARK_TEXT    = 'Verified Profile on TeluguSambandham.com';
 const WATERMARK_OPACITY = 0.2;
+// Vertical centre of the watermark as a fraction of image height from the top
+// (0.8 = 20% of the height above the bottom edge). Horizontal stays centred.
+const WATERMARK_CENTER_Y = 0.8;
 
 // ── Embedded watermark font (fixes the ".notdef box per character" bug) ───────
 // The backend Docker image is node:22-alpine and ships NO fonts, so the SVG
@@ -72,6 +75,35 @@ try {
   console.error(`Watermark font not loaded (${WM_FONT_PATH}): ${err.message}`);
 }
 
+// Rendered vertical extent of the ROTATED watermark text around its centre point,
+// in em (multiples of the font size). Defaults are values measured for the embedded
+// font; ensureWatermarkMetrics() re-measures them once from the real renderer
+// (alpha bounding box of the rotated text) so the bottom/top-edge clamp below uses
+// what is actually drawn.
+const WM_METRICS = { belowEm: 2.6, aboveEm: 2.6 };
+let wmMetricsPromise = null;
+const ensureWatermarkMetrics = () => {
+  if (!wmMetricsPromise) {
+    wmMetricsPromise = (async () => {
+      const W = 2200, H = 4000, FS = Math.round(W / 22); // FS = 100px
+      const svg = buildWatermarkSvg(W, H);
+      const cy = parseFloat(svg.toString().match(/<text x="[^"]+" y="([^"]+)"/)[1]);
+      const { data, info } = await sharp(svg).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      let y0 = Infinity, y1 = -1;
+      for (let y = 0; y < info.height; y++) {
+        for (let x = 0; x < info.width; x++) {
+          if (data[(y * info.width + x) * 4 + 3] > 0) { if (y < y0) y0 = y; if (y > y1) y1 = y; }
+        }
+      }
+      if (y1 > y0) {
+        WM_METRICS.belowEm = (y1 + 1 - cy) / FS;
+        WM_METRICS.aboveEm = (cy - y0) / FS;
+      }
+    })().catch(() => { /* keep defaults */ });
+  }
+  return wmMetricsPromise;
+};
+
 // Escape text for safe embedding inside the SVG overlay.
 const escapeXml = (s) => s.replace(/[<>&'"]/g, (c) => (
   { '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c]
@@ -82,6 +114,13 @@ const escapeXml = (s) => s.replace(/[<>&'"]/g, (c) => (
 const buildWatermarkSvg = (width, height) => {
   const fontSize = Math.max(14, Math.round(width / 22)); // scales with image
   const text = escapeXml(WATERMARK_TEXT);
+  const cx = width / 2;
+  // Half-extent of the rotated text box (length = text advance, thickness ~1em).
+  // Keep the centre at WATERMARK_CENTER_Y unless that would push the text past
+  // the bottom edge; then move it up just enough to fit (same font size).
+  const below = WM_METRICS.belowEm * fontSize + 2; // +2px stroke/AA margin
+  const above = WM_METRICS.aboveEm * fontSize + 2;
+  const cy = Math.max(Math.min(height * WATERMARK_CENTER_Y, height - below), Math.min(above, height / 2));
   const fontFace = WM_FONT_DATA_URI
     ? `@font-face { font-family: 'WMFont'; font-weight: 700;
                    src: url(${WM_FONT_DATA_URI}) format('truetype'); }`
@@ -96,16 +135,17 @@ const buildWatermarkSvg = (width, height) => {
                stroke: #000000; stroke-opacity: ${WATERMARK_OPACITY * 0.5};
                stroke-width: 1px; }
        </style>
-       <text x="50%" y="50%" text-anchor="middle" dominant-baseline="middle"
-             transform="rotate(-30 ${width / 2} ${height / 2})" class="wm">${text}</text>
+       <text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="middle"
+             transform="rotate(-30 ${cx} ${cy})" class="wm">${text}</text>
      </svg>`
   );
 };
 
 // Resize + rotate an input buffer to the given fit, then composite the watermark
 // (sized to the resulting image) and return a JPEG buffer at `quality`.
-// Used for medium and original (NOT thumb).
+// Used for original, medium and thumb.
 const renderWatermarked = async (buffer, resizeOpts, quality) => {
+  await ensureWatermarkMetrics();
   // First pass: produce the resized image so we know its real dimensions.
   const resized = await sharp(buffer).rotate().resize(resizeOpts.width, resizeOpts.height, resizeOpts.options).toBuffer();
   const meta = await sharp(resized).metadata();
@@ -152,8 +192,7 @@ const processImage = async (base64Image, userId) => {
   };
 
   try {
-    // Generate all three sizes concurrently. Original + medium get the baked-in
-    // watermark; thumb stays clean (watermark text is illegible at 300px).
+    // Generate all three sizes concurrently, each with the baked-in watermark.
     const [originalBuf, mediumBuf, thumbBuf] = await Promise.all([
       // ── Original: capped to ORIGINAL_MAX_DIM, watermarked, high-quality JPEG ──
       renderWatermarked(
@@ -169,12 +208,12 @@ const processImage = async (base64Image, userId) => {
         80
       ),
 
-      // ── Thumb (300×300, cover crop — square), NO watermark ─────────────────
-      sharp(buffer)
-        .rotate()
-        .resize(SIZES.thumb.width, SIZES.thumb.height, { fit: 'cover', position: 'top' })
-        .jpeg({ quality: 70 })
-        .toBuffer(),
+      // ── Thumb (300×300, cover crop — square), watermarked ──────────────────
+      renderWatermarked(
+        buffer,
+        { width: SIZES.thumb.width, height: SIZES.thumb.height, options: { fit: 'cover', position: 'top' } },
+        70
+      ),
     ]);
 
     await Promise.all([
@@ -199,7 +238,12 @@ const deleteImageFiles = (imagepath, imagepath_medium, imagepath_thumb) => {
   [imagepath, imagepath_medium, imagepath_thumb].forEach(relPath => {
     if (!relPath) return;
     try {
-      const fullPath = path.join(__dirname, '..', 'public', relPath);
+      const fullPath = path.resolve(__dirname, '..', 'public', '.' + path.sep + String(relPath).replace(/^[/\\]+/, ''));
+      // Only ever unlink files that live inside the gallery upload directory.
+      if (!fullPath.startsWith(path.resolve(UPLOAD_DIR) + path.sep)) {
+        console.error(`Refusing to delete path outside gallery dir: ${relPath}`);
+        return;
+      }
       if (fs.existsSync(fullPath)) {
         fs.unlinkSync(fullPath);
       }
@@ -215,6 +259,7 @@ module.exports = {
   // exported for the one-off re-watermark script (scripts/watermarkExisting.js)
   renderWatermarked,
   buildWatermarkSvg,
+  ensureWatermarkMetrics,
   UPLOAD_DIR,
   ORIGINAL_MAX_DIM,
   SIZES,

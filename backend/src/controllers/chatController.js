@@ -1,9 +1,24 @@
 
 const chatService = require('../services/chat');
+const blocks = require('../services/blocks');
+const pool = require('../services/pool');
+
+// The acting user is always the authenticated user (req.user.uid). If the body
+// carries a different id, reject it so a spoofed id cannot bypass a block.
+// Returns true when it already sent a 403.
+const rejectSpoofedId = (req, res, bodyId) => {
+    if (bodyId != null && bodyId !== '' && Number(bodyId) !== Number(req.user.uid)) {
+        res.status(403).json({ status: 'Failure', result: 'Not allowed.' });
+        return true;
+    }
+    return false;
+};
 
 exports.sendMessage = async (req, res) => {
     try {
-        const { sender_id, receiver_id, message, message_type = 'text' } = req.body;
+        const { sender_id: bodySenderId, receiver_id, message, message_type = 'text' } = req.body;
+        if (rejectSpoofedId(req, res, bodySenderId)) return;
+        const sender_id = req.user.uid;
 
         if (!sender_id || !receiver_id || !message) {
             return res.status(400).json({
@@ -32,6 +47,23 @@ exports.sendMessage = async (req, res) => {
             });
         }
 
+        // Block checks run BEFORE a conversation row is created.
+        const receiverExists = await pool.query('SELECT 1 FROM public.users WHERE uid = $1', [Number(receiver_id)]);
+        if (receiverExists.rowCount === 0) {
+            return res.status(200).json({ status: 'Failure', result: "You can't message this user." });
+        }
+        const rel = await blocks.blockedRelationship(sender_id, receiver_id);
+        if (rel.blockedMe) {
+            return res.status(200).json({ status: 'Failure', result: "You can't message this user." });
+        }
+        if (rel.iBlocked) {
+            return res.status(200).json({
+                status: 'Failure',
+                reason: 'you_blocked',
+                result: 'You have blocked this user. Unblock to send messages.'
+            });
+        }
+
         const result = await chatService.sendMessage(
             Number(sender_id),
             Number(receiver_id),
@@ -53,12 +85,23 @@ exports.sendMessage = async (req, res) => {
 
 exports.getMessages = async (req, res) => {
     try {
-        const { user_id, other_user_id, page = 1, limit = 50 } = req.body;
+        const { user_id: bodyUserId, other_user_id, page = 1, limit = 50 } = req.body;
+        if (rejectSpoofedId(req, res, bodyUserId)) return;
+        const user_id = req.user.uid;
 
         if (!user_id || !other_user_id) {
             return res.status(400).json({
                 status: 'Failure',
                 result: 'user_id and other_user_id are required.'
+            });
+        }
+
+        const rel = await blocks.blockedRelationship(user_id, other_user_id);
+        if (rel.blockedMe) {
+            return res.status(200).json({
+                status: 'Failure',
+                reason: 'not_available',
+                result: 'This conversation is not available.'
             });
         }
 
@@ -74,6 +117,7 @@ exports.getMessages = async (req, res) => {
             data:           result.rows,
             total:          result.total,
             conversationId: result.conversationId,
+            iBlocked:       rel.iBlocked,
             page:           Number(page),
             limit:          Number(limit)
         });
@@ -86,7 +130,8 @@ exports.getMessages = async (req, res) => {
 
 exports.getInbox = async (req, res) => {
     try {
-        const { user_id } = req.body;
+        if (rejectSpoofedId(req, res, req.body.user_id)) return;
+        const user_id = req.user.uid;
 
         if (!user_id) {
             return res.status(400).json({
@@ -110,7 +155,8 @@ exports.getInbox = async (req, res) => {
 
 exports.getUnreadMessageCount = async (req, res) => {
     try {
-        const { user_id } = req.body;
+        if (rejectSpoofedId(req, res, req.body.user_id)) return;
+        const user_id = req.user.uid;
 
         if (!user_id) {
             return res.status(400).json({
@@ -189,12 +235,23 @@ exports.deleteMessage = async (req, res) => {
 
 exports.getConversation = async (req, res) => {
     try {
-        const { user_id, other_user_id } = req.body;
+        const { user_id: bodyUserId, other_user_id } = req.body;
+        if (rejectSpoofedId(req, res, bodyUserId)) return;
+        const user_id = req.user.uid;
 
         if (!user_id || !other_user_id) {
             return res.status(400).json({
                 status: 'Failure',
                 result: 'user_id and other_user_id are required.'
+            });
+        }
+
+        // Same shape as "no conversation" so a block is not revealed.
+        if ((await blocks.blockedRelationship(user_id, other_user_id)).blockedMe) {
+            return res.status(200).json({
+                status: 'Success',
+                data:   null,
+                result: 'No conversation found.'
             });
         }
 

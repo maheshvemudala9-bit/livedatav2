@@ -5,6 +5,7 @@ import api from '../../../utils/api' // <-- updated import
 import { imageUrl, approvedProfileImage } from '../../../utils/imageUrl';
 import { Link } from 'react-router-dom'
 import Profiles from '../../templates/ImagesLoader'
+import { placeholderFor } from '../../../utils/placeholders';
 import Sidebar from './templates/Sidebar'
 //mui
 import TextField from "@mui/material/TextField";
@@ -23,6 +24,11 @@ import moment from 'moment'
 import jsonArr from "../../templates/data/jsonData";
 import { useToast } from '../../../components/hooks/ToastContext';
 import { toTitleCase } from '../../../utils/normalizeText';
+import { RASI_LABELS, nakshatrasFor, padasFor, resolveSaved } from '../../../data/horoscope';
+import GroupedRadioSelect from '../../common/GroupedRadioSelect';
+import { EDUCATION_GROUPS, JOB_GROUPS } from '../../../data/educationJob';
+import LocationCascade from '../../common/LocationCascade';
+import { formatPlace, normalizeLegacyLocation, parsePlace, isCanonicalLocation, mapLegacyJobLocation } from '../../../data/locations';
 //end of icons
 import {
   fetchUserDetails,
@@ -58,30 +64,21 @@ const theme = createTheme({
   },
 });
 
-const countries = ["India", "United States", "Australia", "Canada", "Germany"];
-const states = ["Andhra Pradesh", "Telangana"];
+const siblingValue = (v) => (v === null || v === undefined || String(v).trim() === '' ? '0' : String(v));
+const DETAIL_MAX = 200;
+const DETAIL_HELP = "Do not enter phone numbers or email addresses.";
 const MaritalStatus = ["Single", "Married", "Divorced"];
-const padams = ["1", "2", "3", "4"];
 const inrOptions = [{ label: "Thousand" }, { label: "Lakhs" }, { label: "Crores" }]
 const diet = ["Vegeterian", "Eggitarian", "Non-vegetarian"];
 const habitsOptions = ["Never", "Occasionally", "Socially", "Regularly"]
-const cities = jsonArr.districtData ? jsonArr.districtData.map(res => res.districtlabel) : [];
-// ["Hyderabad","Siddipet","Karimnagar","Sircilla","Vemulawada"];
-const jobCities = jsonArr.jobLocationsData ? jsonArr.jobLocationsData.map(res => res.location) : [];
-// ["Hyderabad","Bangalore","Pune","Chennai","Mumbai","Delhi","Kolkata","USA","UK","Canada","Other"];
 const heights = jsonArr.heightData ? jsonArr.heightData.map(res => res.heightlabel) : [];
 // ["5","5-1","5-2"];
 const genders = ["Male", "Female"]
 // const castes =["Goldsmith","Carpenter","Kamma","Kapu","Brahmin"];
 const castes = jsonArr.casteData ? jsonArr.casteData.map(res => res.castelabel) : [];
-const nakshtras = jsonArr.nakshatrasData ? jsonArr.nakshatrasData.map(res => res.nakshatra) : [];
 // ["Ardra","Shathabhisha","Swathi","Anuradha","Vishaka"]
-const rasi = jsonArr.rasiData ? jsonArr.rasiData.map(res => res.rasi) : [];
 //  ["Midhuna","Simha","Tula"]
-const professions = jsonArr.occupationData ? jsonArr.occupationData.map(res => res.occupation) : [];
 // [ "Psychology Or Social Sciences", "Business", "Law", "Medical", "Computer & Information Technology", "Arts", "Commerce", "Engineering Technology", "Fashions", "Fine Arts", "Finance &amp; Accounting", "Education", "Architecture", "Others" ]
-const degree = jsonArr.educationCourseData ? jsonArr.educationCourseData.map(res => res.course) : [];
-// [ "Matriculation/O-Level", "Intermediate/A-Level", "Bachelors", "Masters", "MPhil/MS", "PHD/Doctorate", "Certification", "Diploma", "Short Course" ]
 
 const EditProfile = () => {
   //input handler states 
@@ -93,12 +90,18 @@ const EditProfile = () => {
     {
       uid: localStorage.getItem('userId'),
       fname: "", lname: "", mobile: "", email: "", gender: null, pob: null, dob: "", tob: "", caste: null, maritalStatus: null, height: null,
-      country: null, state: null, city: null, about: "", nakshtra: null, padam: null, rasi: null, degree: null, profession: null, fatherName: "",
-      motherName: "", brothers: "", sisters: "", brothersMarried: "", sistersMarried: "", fatherOccupation: null, motherOccupation: null,
-      familyResidence: null, diet: null, habitsmoke: null, habitdrink: null, partnerPreferences: "", jobCity: null,
+      about: "", nakshtra: null, padam: null, rasi: null, gothram: "", altPhone: "", degree: null, profession: null, fatherName: "",
+      motherName: "", brothers: "0", sisters: "0", brothersMarried: "0", sistersMarried: "0", fatherOccupation: null, motherOccupation: null,
+      familyResidence: null, diet: null, habitsmoke: null, habitdrink: null, partnerPreferences: "",
+      jobCountry: "", jobState: "", jobDistrict: "", jobLegacy: false, jobLegacyText: "",
+      educationDetail: "", jobDetail: "",
+      pobLoc: { country: "", state: "", district: "" },
+      familyCountry: "", familyState: "", familyDistrict: "", familyLegacy: false,
       package: "NA"
     });
   const [errors, setErrors] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [horoHint, setHoroHint] = useState(false);
   const [getGallery, setGetGallery] = useState([])
   const [userDetails, setUserDetails] = useState([]);
   const userId = localStorage.getItem("userId"); // <-- define userId once
@@ -150,22 +153,45 @@ const EditProfile = () => {
   //salry
 
   const handleGenderChange = (event, newValue) => { setFormData({ ...formData, gender: newValue }); validateFields('gender', newValue); };
-  const handlePobChange = (event, newValue) => { setFormData({ ...formData, pob: newValue }); validateFields('pob', newValue) }
+  const handlePobChange = (next) => {
+    const pob = formatPlace(next);
+    setFormData(prev => ({ ...prev, pobLoc: next, pob }));
+    validateFields('pob', next.district ? pob : '');
+  }
   const handleCasteChange = (event, newValue) => { setFormData({ ...formData, caste: newValue }); validateFields('caste', newValue) }
   const handleMaritalStatusChange = (event, newValue) => { setFormData({ ...formData, maritalStatus: newValue }); validateFields('maritalStatus', newValue) }
   const handleHeightChange = (event, newValue) => { setFormData({ ...formData, height: newValue }); validateFields('height', newValue) }
-  const handleNakshtraChange = (event, newValue) => { setFormData({ ...formData, nakshtra: newValue }) }
-  const handlePadamChange = (event, newValue) => { setFormData({ ...formData, padam: newValue }) }
-  const handleRasiChange = (event, newValue) => { setFormData({ ...formData, rasi: newValue }) }
-  const handleCountryChange = (event, newValue) => { setFormData({ ...formData, country: newValue }); }
-  const handleStateChange = (event, newValue) => { setFormData({ ...formData, state: newValue }); }
-  const handleCityChange = (event, newValue) => { setFormData({ ...formData, city: newValue }); }
-  const handleDegreeChange = (event, newValue) => { setFormData({ ...formData, degree: newValue }); }
-  const handleProfessionChange = (event, newValue) => { setFormData({ ...formData, profession: newValue }); }
-  const handleJobCityChange = (event, newValue) => { setFormData({ ...formData, jobCity: newValue }); validateFields('jobCity', newValue) }
-  const handleFatherOccupationChange = (event, newValue) => { setFormData({ ...formData, fatherOccupation: newValue }); }
-  const handleFamilyResidenceChange = (event, newValue) => { setFormData({ ...formData, familyResidence: newValue }); }
-  const handleMotherOccupationChange = (event, newValue) => { setFormData({ ...formData, motherOccupation: newValue }); }
+  const handleNakshtraChange = (event, newValue) => {
+    const padas = newValue ? padasFor(formData.rasi, newValue) : [];
+    const padam = padas.length === 1 ? padas[0] : (padas.includes(formData.padam) ? formData.padam : null);
+    setHoroHint(false);
+    setFormData({ ...formData, nakshtra: newValue, padam });
+  }
+  const handlePadamChange = (event, newValue) => { setHoroHint(false); setFormData({ ...formData, padam: newValue }) }
+  const handleRasiChange = (event, newValue) => {
+    let nakshtra = formData.nakshtra, padam = formData.padam;
+    if (!newValue || !nakshatrasFor(newValue).includes(nakshtra)) { nakshtra = null; padam = null; }
+    else {
+      const padas = padasFor(newValue, nakshtra);
+      padam = padas.length === 1 ? padas[0] : (padas.includes(padam) ? padam : null);
+    }
+    setHoroHint(false);
+    setFormData({ ...formData, rasi: newValue, nakshtra, padam });
+  }
+  const handleJobLocationChange = (next) => {
+    setFormData(prev => ({
+      ...prev,
+      jobCountry: next.country, jobState: next.state, jobDistrict: next.district,
+      jobLegacy: false, jobLegacyText: ""
+    }));
+  }
+  const handleFamilyLocationChange = (next) => {
+    setFormData(prev => ({
+      ...prev,
+      familyCountry: next.country, familyState: next.state, familyDistrict: next.district,
+      familyResidence: formatPlace(next), familyLegacy: false
+    }));
+  }
   const handleDietChange = (event, newValue) => { setFormData({ ...formData, diet: newValue }); }
   const handleSmokeHabitsChange = (event, newValue) => { setFormData({ ...formData, habitsmoke: newValue }); }
   const handleDrinkHabitsChange = (event, newValue) => { setFormData({ ...formData, habitdrink: newValue }); }
@@ -173,8 +199,8 @@ const EditProfile = () => {
   const validateFields = (name, value) => {
     const validationErrors = { ...errors };
     switch (name) {
-      case "fname": validationErrors.fname = value.trim() ? "" : "First Name is required"; break;
-      case "lname": validationErrors.lname = value.trim() ? "" : "Last Name is required"; break;
+      case "fname": validationErrors.fname = value.trim() ? "" : "Surname is required"; break;
+      case "lname": validationErrors.lname = value.trim() ? "" : "Name is required"; break;
       case "email": validationErrors.email = value.trim()
         ? /\S+@\S+\.\S+/.test(value)
           ? "" : "Email is not valid"
@@ -183,7 +209,6 @@ const EditProfile = () => {
       case "pob": validationErrors.pob = value ? "" : "Place of birth is required"; break;
       case 'caste': validationErrors.caste = value ? "" : "caste required."; break;
       case 'maritalStatus': validationErrors.maritalStatus = value ? "" : "Marital Status is required."; break;
-      case 'jobCity': validationErrors.jobCity = value ? "" : "Job location is required"; break;
       default: break;
     } setErrors(validationErrors);
   };
@@ -210,6 +235,27 @@ const EditProfile = () => {
           console.log("xloginmys", response.data)
           const data = response.data;
         
+          const horo = resolveSaved(data.rasi, data.nakshtra, data.padam);
+          setHoroHint(horo.needsReselect);
+          // Locations: map every legacy shape ('TS_Adilabad', 'Adilabad (TG)', 'AP') to the canonical
+          // country / state / district. Unmappable values are returned as they are, and the cascade
+          // then shows them read-only with a "re-select" hint instead of erasing them.
+          // (Present location users.ucountry / ustate / upresentloc is not edited here and never sent.)
+          const pobParsed = parsePlace(data.upob);
+          const pobLoc = { country: pobParsed.country, state: pobParsed.state, district: pobParsed.district };
+          const hasFamilyCols = !!(data.family_country || data.family_state || data.family_district);
+          const famLoc = hasFamilyCols
+            ? { country: data.family_country || "", state: data.family_state || "", district: data.family_district || "" }
+            : normalizeLegacyLocation({ district: data.familyresidence });
+          const famMapped = hasFamilyCols || (!!data.familyresidence && isCanonicalLocation(famLoc) && !!famLoc.country);
+          const famLegacy = !hasFamilyCols && !!data.familyresidence && !famMapped;
+          // Job location: new columns first, else map the legacy work-city / country value.
+          // Unmappable ("Other" ...) is shown read-only and the stored value is kept (not sent).
+          const hasJobCols = !!(data.job_country || data.job_state || data.job_city);
+          const jobMapped = hasJobCols
+            ? { country: data.job_country || "", state: data.job_state || "", district: data.job_city || "", ok: true }
+            : mapLegacyJobLocation(data.jobcity);
+          const jobLegacy = !jobMapped.ok;
           setFormData(prevFormData => ({
             ...prevFormData,
             "fname": data.ufname,
@@ -217,31 +263,41 @@ const EditProfile = () => {
             "mobile": data.uphone,
             "email": data.uemail,
             "gender": data.ugender,
-            "pob": data.upob,
+            "pob": pobParsed.ok ? formatPlace(pobLoc) : (data.upob || ""),
+            "pobLoc": pobParsed.ok ? pobLoc : { country: "", state: "", district: data.upob || "" },
             "dob": data.udob,
             "tob": data.utob,
             "caste": data.ucaste,
             "maritalStatus": data.maritalstatus,
             "height": data.uheight,
-            "country": data.ucountry,
-            "state": data.ustate,
-            "city": data.upresentloc,
-            "jobCity": data.jobcity,
+            "educationDetail": data.education_detail || "",
+            "jobDetail": data.job_detail || "",
+            "jobCountry": jobLegacy ? "" : jobMapped.country,
+            "jobState": jobLegacy ? "" : jobMapped.state,
+            "jobDistrict": jobLegacy ? "" : jobMapped.district,
+            "jobLegacy": jobLegacy,
+            "jobLegacyText": jobLegacy ? (data.jobcity || "") : "",
             "about": data.about,
-            "nakshtra": data.nakshtra,
-            "padam": data.padam,
-            "rasi": data.rasi,
+            "nakshtra": horo.nakshtra,
+            "padam": horo.padam,
+            "rasi": horo.rasi,
+            "gothram": data.gothram || "",
+            "altPhone": data.ualtphone || "",
             "degree": data.degree,
             "profession": data.ujob,
             "fatherName": data.fathername,
             "motherName": data.mothername,
-            "brothers": data.brothers,
-            "sisters": data.sisters,
-            "brothersMarried": data.brothersmarried,
-            "sistersMarried": data.sistersmarried,
+            "brothers": siblingValue(data.brothers),
+            "sisters": siblingValue(data.sisters),
+            "brothersMarried": siblingValue(data.brothersmarried),
+            "sistersMarried": siblingValue(data.sistersmarried),
             "fatherOccupation": data.fatheroccupation,
             "motherOccupation": data.motheroccupation,
-            "familyResidence": data.familyresidence,
+            "familyResidence": famMapped ? formatPlace(famLoc) : (data.familyresidence || ""),
+            "familyCountry": famMapped ? famLoc.country : "",
+            "familyState": famMapped ? famLoc.state : "",
+            "familyDistrict": famMapped ? famLoc.district : "",
+            "familyLegacy": famLegacy,
             "diet": data.diet,
             "habitsmoke": data.habitsmoke,
             "habitdrink": data.habitdrink,
@@ -272,23 +328,66 @@ const EditProfile = () => {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    // Alternate phone: optional; digits with optional leading +, 10-15 digits.
+    const altRaw = String(formData.altPhone || '').replace(/[\s-]/g, '');
+    const primaryRaw = String(formData.mobile || '').replace(/[\s-]/g, '');
+    let altError = "";
+    if (altRaw) {
+      if (!/^\+?\d{10,15}$/.test(altRaw)) altError = "Enter a valid alternate number (10 to 15 digits, optional leading +).";
+      else if (altRaw.replace(/^\+/, '') === primaryRaw.replace(/^\+/, '')) altError = "Alternate number must be different from your primary number.";
+    }
+    const gothramValue = String(formData.gothram || '').trim();
+    const gothramError = gothramValue.length > 100 ? "Gothram must be 100 characters or fewer." : "";
+    const educationDetailValue = String(formData.educationDetail || '').trim();
+    const jobDetailValue = String(formData.jobDetail || '').trim();
+    const educationDetailError = educationDetailValue.length > DETAIL_MAX ? `Education Detail must be ${DETAIL_MAX} characters or fewer.` : "";
+    const jobDetailError = jobDetailValue.length > DETAIL_MAX ? `Job Detail must be ${DETAIL_MAX} characters or fewer.` : "";
+    if (altError || gothramError || educationDetailError || jobDetailError) {
+      setErrors(prev => ({ ...prev, altPhone: altError, gothram: gothramError, educationDetail: educationDetailError, jobDetail: jobDetailError }));
+      showToast({ title: 'Check your details', description: altError || gothramError || educationDetailError || jobDetailError, type: 'error' });
+      return;
+    }
+    setErrors(prev => ({ ...prev, altPhone: "", gothram: "", educationDetail: "", jobDetail: "" }));
     try {
       const normalizedFormData = {
   ...formData,
+  gothram:    gothramValue,
+  educationDetail: educationDetailValue, // always sent so clearing the box works
+  jobDetail:       jobDetailValue,
+  ualtphone:  altRaw,
   fname:      toTitleCase(formData.fname),
   lname:      toTitleCase(formData.lname),
   fatherName: toTitleCase(formData.fatherName),
   motherName: toTitleCase(formData.motherName),
+  brothers:        siblingValue(formData.brothers),
+  sisters:         siblingValue(formData.sisters),
+  brothersMarried: siblingValue(formData.brothersMarried),
+  sistersMarried:  siblingValue(formData.sistersMarried),
   about:        formData.about, // keep as-is — free text paragraph
   partnerPreferences: formData.partnerPreferences // keep as-is — free text
   // about & partnerPreferences kept as-is (free text paragraphs)
 };
       
  setFormData(normalizedFormData);
-      const res = await updateUserRecords(normalizedFormData);
-      if (res.data.status === "Success") {
-       
-
+      setSaving(true);
+      // Unmapped legacy family location: send neither the cascade parts nor a changed text, so the
+      // stored values stay as they are (omitted keys = keep).
+      const payload = { ...normalizedFormData };
+      if (payload.familyLegacy) {
+        delete payload.familyCountry;
+        delete payload.familyState;
+        delete payload.familyDistrict;
+      }
+      // Unmapped legacy job location: send no job keys so the stored jobcity text stays as it is.
+      delete payload.jobLegacy;
+      delete payload.jobLegacyText;
+      if (formData.jobLegacy) {
+        delete payload.jobCountry;
+        delete payload.jobState;
+        delete payload.jobDistrict;
+      }
+      const res = await updateUserRecords(payload);
+      if (res.data && res.data.status === "Success") {
         const ress = await updateUserRegistrationDetails(normalizedFormData);
         if (ress.data.status === "Success") {
 
@@ -298,15 +397,17 @@ const EditProfile = () => {
           console.log("Data update unsuccessful.");
         }
         //end user ingest
-        console.log("user details Data updated successfully!");
-        // event.target.reset();
-      } else if (res.data.status === "Fail") {
-        console.log("Data update unsuccessful.");
-
-        // ❌ Failure
+        setErrors({});
+        showToast({
+          title: 'Profile Updated',
+          description: 'Your profile details have been saved successfully.',
+          type: 'success'
+        });
+      } else {
+        // ❌ Failure: show the server's message
         showToast({
           title: 'Update Failed',
-          description: 'Could not save your profile. Please try again.',
+          description: (res.data && typeof res.data.result === 'string' && res.data.result) || 'Could not update profile. Please try again.',
           type: 'error'
         });
       }
@@ -315,18 +416,15 @@ const EditProfile = () => {
       if (axios.isCancel(error)) {
         console.log("Failure", error.message)
       } else {
+        const serverMsg = error && error.response && error.response.data && error.response.data.result;
+        showToast({
+          title: 'Update Failed',
+          description: (typeof serverMsg === 'string' && serverMsg) || 'Could not update profile. Please try again.',
+          type: 'error'
+        });
       }
-    }
-    const validationErrors = {};
-    
-    setErrors(validationErrors);
-    if (Object.keys(validationErrors).length === 0) {
-     
-      showToast({
-        title: 'Profile Updated',
-        description: 'Your profile details have been saved successfully.',
-        type: 'success'
-      });
+    } finally {
+      setSaving(false);
     }
   };
   return (
@@ -364,7 +462,8 @@ const EditProfile = () => {
                                   src={imageUrl(profileFile.imagepath_thumb) || imageUrl(profileFile.imagepath)}
                                   className="img-responsive img-circle edit-avater ep-avatar__img"
                                   alt="Profile"
-                                  onError={e => { e.target.src = Profiles.notfound; }}
+                                  data-gender={localStorage.getItem('userGender') || ''}
+                                  onError={e => { e.target.src = placeholderFor(localStorage.getItem('userGender')); }}
                                 />
                               ) : null;
                             })()
@@ -386,7 +485,7 @@ const EditProfile = () => {
                     <div className="ep-grid">
                       <div className="ep-field"> {/* Container Box for consistent size */}
 
-                        <TextField label="First Name" name="fname"
+                        <TextField label="Surname" name="fname"
                           value={formData.fname}
                           onChange={handleChange}
                           variant="outlined"
@@ -398,7 +497,7 @@ const EditProfile = () => {
                       </div>
                       <div className="ep-field">
 
-                        <TextField label="Last Name" name="lname" value={formData.lname} onChange={handleChange} variant="outlined" InputProps={{ readOnly: true, startAdornment: (<InputAdornment position="start"> <PersonIcon /> </InputAdornment>), }} margin="normal" fullWidth /> {errors.lname && <span className="error">{errors.lname}</span>}
+                        <TextField label="Name" name="lname" value={formData.lname} onChange={handleChange} variant="outlined" InputProps={{ readOnly: true, startAdornment: (<InputAdornment position="start"> <PersonIcon /> </InputAdornment>), }} margin="normal" fullWidth /> {errors.lname && <span className="error">{errors.lname}</span>}
                       </div>
                       <div className="ep-field">
                         {/* <label>Gender</label> <input type="text" className="form-control" value="Daniel Deve" /> */}
@@ -408,24 +507,16 @@ const EditProfile = () => {
 
                         {errors.gender && <span className="error">{errors.gender}</span>}
                       </div>
-                      <div className="ep-field">
-
-                        <Autocomplete
-                          options={cities}
-                          getOptionLabel={(option) => option}
-                          value={formData.pob}
-                          onChange={handlePobChange}
-                          renderInput={(params) => (
-                            <TextField
-                              {...params}
-                              label="Place of birth"
-                              variant="outlined"
-                              margin="normal"
-                            />
-                          )}
-                        />
-                        {errors.pob && <span className="error">{errors.pob}</span>}
-                      </div>
+                      <LocationCascade
+                        variant="mui"
+                        idPrefix="ep-pob"
+                        fieldClassName="ep-field"
+                        fullClassName="ep-field--full"
+                        labels={{ country: "Place of birth: Country", state: "Place of birth: State", district: "Place of birth: District / City", stateText: "Place of birth: State / Province", cityText: "Place of birth: City", legacy: "Place of birth" }}
+                        value={formData.pobLoc}
+                        onChange={handlePobChange}
+                        error={errors.pob}
+                      />
                       <div className="ep-field">
 
                         {/* <label>DOB</label> <input type="text" name="" data-datedropper placeholder="Date of Birth" className="datedropper form-control" /> */}
@@ -516,63 +607,6 @@ const EditProfile = () => {
                         />
                       </div>
 
-                      <div className="ep-field">
-                        {/* <label>Country of Residence</label> <input type="text" className="form-control" value="91 258 587 4123" /> */}
-                        <Autocomplete
-                          options={countries}
-                          getOptionLabel={(option) => option}
-                          value={formData.country}
-                          onChange={handleCountryChange}
-                          renderInput={(params) => (
-                            <TextField
-                              {...params}
-                              label="Select Countries"
-                              variant="outlined"
-                              margin="normal"
-                            />
-                          )}
-                        />
-                      </div>
-                      <div className="ep-field">
-                        {/* <label>State</label><input type="text" className="form-control" value="91 258 587 4123" /> */}
-                        <Autocomplete
-                          options={states}
-                          getOptionLabel={(option) => option}
-                          value={formData.state}
-                          onChange={handleStateChange}
-                          // value={heightValue}
-                          // onChange={(event, newValue) => setHeightValue(newValue)}
-                          renderInput={(params) => (
-                            <TextField
-                              {...params}
-                              label="Select State"
-                              variant="outlined"
-                              margin="normal"
-                            />
-                          )}
-                        />
-                      </div>
-                      <div className="ep-field">
-                        {/* <label>City</label><input type="text" className="form-control" value="" /> */}
-
-                        <Autocomplete
-                          options={cities}
-                          getOptionLabel={(option) => option}
-                          value={formData.city}
-                          onChange={handleCityChange}
-                          // value={heightValue}
-                          // onChange={(event, newValue) => setHeightValue(newValue)}
-                          renderInput={(params) => (
-                            <TextField
-                              {...params}
-                              label="Select Cities"
-                              variant="outlined"
-                              margin="normal"
-                            />
-                          )}
-                        />
-                      </div>
-
 
                       <div className="ep-field ep-field--full">
                         {/* <label>About Yourself</label><textarea className="form-control" placeholder="Introduction"></textarea> */}
@@ -599,16 +633,16 @@ const EditProfile = () => {
                       <div className="ep-field">
                         {/* <label>Nakshtra</label><input type="text" className="form-control" value="Ardra" /> */}
                         <Autocomplete
-                          options={nakshtras}
+                          options={RASI_LABELS}
                           getOptionLabel={(option) => option}
-                          value={formData.nakshtra}
-                          onChange={handleNakshtraChange}
+                          value={formData.rasi}
+                          onChange={handleRasiChange}
                           // value={heightValue}
                           // onChange={(event, newValue) => setHeightValue(newValue)}
                           renderInput={(params) => (
                             <TextField
                               {...params}
-                              label="Select Nakshtras"
+                              label="Select Rasi"
                               variant="outlined"
                               margin="normal"
                             />
@@ -618,9 +652,32 @@ const EditProfile = () => {
                       <div className="ep-field">
                         {/* <label>Padam</label><input type="text" className="form-control" value="3" /> */}
                         <Autocomplete
-                          options={padams}
+                          options={nakshatrasFor(formData.rasi)}
+                          getOptionLabel={(option) => option}
+                          value={formData.nakshtra}
+                          disabled={!formData.rasi}
+                          onChange={handleNakshtraChange}
+
+                          // value={heightValue}
+                          // onChange={(event, newValue) => setHeightValue(newValue)}
+                          renderInput={(params) => (
+                            <TextField
+                              {...params}
+                              label="Select Nakshatram"
+                              placeholder={formData.rasi ? "" : "Select Rasi first"}
+                              variant="outlined"
+                              margin="normal"
+                            />
+                          )}
+                        />
+                      </div>
+                      <div className="ep-field">
+                        {/* <label>Rasi</label><input type="text" className="form-control" value="Midhuna" /> */}
+                        <Autocomplete
+                          options={padasFor(formData.rasi, formData.nakshtra)}
                           getOptionLabel={(option) => option}
                           value={formData.padam}
+                          disabled={!formData.nakshtra}
                           onChange={handlePadamChange}
 
                           // value={heightValue}
@@ -634,26 +691,15 @@ const EditProfile = () => {
                             />
                           )}
                         />
+                        {horoHint && <span className="error">Please re-select your Nakshatra and Padam.</span>}
                       </div>
                       <div className="ep-field">
-                        {/* <label>Rasi</label><input type="text" className="form-control" value="Midhuna" /> */}
-                        <Autocomplete
-                          options={rasi}
-                          getOptionLabel={(option) => option}
-                          value={formData.rasi}
-                          onChange={handleRasiChange}
-
-                          // value={heightValue}
-                          // onChange={(event, newValue) => setHeightValue(newValue)}
-                          renderInput={(params) => (
-                            <TextField
-                              {...params}
-                              label="Select Rasi"
-                              variant="outlined"
-                              margin="normal"
-                            />
-                          )}
-                        />
+                        <TextField label="Gothram" name="gothram"
+                          value={formData.gothram || ""}
+                          onChange={handleChange}
+                          variant="outlined" margin="normal" fullWidth
+                          inputProps={{ maxLength: 100 }} />
+                        {errors.gothram && <span className="error">{errors.gothram}</span>}
                       </div>
 
 
@@ -690,6 +736,16 @@ const EditProfile = () => {
                           }} margin="normal" fullWidth // Ensures the TextField takes full width of the Box 
                         />
                       </div>
+                      <div className="ep-field">
+                        <TextField label="Alternate Phone Number" name="altPhone"
+                          value={formData.altPhone || ""}
+                          onChange={handleChange}
+                          variant="outlined" InputProps={{
+                            startAdornment: (<InputAdornment position="start">
+                              <PhoneIcon /> </InputAdornment>),
+                          }} inputProps={{ maxLength: 20, inputMode: 'tel' }} margin="normal" fullWidth />
+                        {errors.altPhone && <span className="error">{errors.altPhone}</span>}
+                      </div>
                     </div>
                   </div>
                   {/* <!-- End Social Background --> 
@@ -700,58 +756,57 @@ const EditProfile = () => {
                     </div>
                     <div className="ep-grid">
                       <div className="ep-field">
-                        
-                        <Autocomplete
-                          options={degree}
-                          getOptionLabel={(option) => option}
+                        <GroupedRadioSelect
+                          variant="mui"
+                          label="Highest Education"
+                          title="Select Highest Education"
+                          groups={EDUCATION_GROUPS}
                           value={formData.degree}
-                          onChange={handleDegreeChange}
-                          renderInput={(params) => (
-                            <TextField
-                              {...params}
-                              label="Select Degree/Education Levels"
-                              variant="outlined"
-                              margin="normal"
-                            />
-                          )}
+                          onChange={(v) => setFormData((prev) => ({ ...prev, degree: v }))}
                         />
                       </div>
                       <div className="ep-field">
-                        <Autocomplete
-                          options={professions}
-                          getOptionLabel={(option) => option}
+                        <GroupedRadioSelect
+                          variant="mui"
+                          label="Profession"
+                          title="Select Profession"
+                          groups={JOB_GROUPS}
                           value={formData.profession}
-                          onChange={handleProfessionChange}
-                          renderInput={(params) => (
-                            <TextField
-                              {...params}
-                              label="Select Fields of Study/Professions"
-                              variant="outlined"
-                              margin="normal"
-                            />
-                          )}
+                          onChange={(v) => setFormData((prev) => ({ ...prev, profession: v }))}
                         />
                       </div>
-
-
                       <div className="ep-field">
-                        {/* <label>Job Location</label><input type="text" className="form-control" value="" placeholder="e.g. Web Designer" /> */}
-                        <Autocomplete
-                          options={jobCities}
-                          getOptionLabel={(option) => option}
-                          value={formData.jobCity}
-                          onChange={handleJobCityChange}
-                          renderInput={(params) => (
-                            <TextField
-                              {...params}
-                              label="Select Job Location"
-                              variant="outlined"
-                              margin="normal"
-                            />
-                          )}
-                        />
-                        {errors.jobCity && <span className="error">{errors.jobCity}</span>}
+                        <TextField label="Education Detail" name="educationDetail"
+                          value={formData.educationDetail || ""}
+                          onChange={(e) => setFormData((prev) => ({ ...prev, educationDetail: e.target.value }))}
+                          multiline minRows={2} variant="outlined" margin="normal" fullWidth
+                          inputProps={{ maxLength: DETAIL_MAX }}
+                          helperText={`${DETAIL_HELP} (${String(formData.educationDetail || "").length}/${DETAIL_MAX})`} />
+                        {errors.educationDetail && <span className="error">{errors.educationDetail}</span>}
                       </div>
+                      <div className="ep-field">
+                        <TextField label="Job Detail" name="jobDetail"
+                          value={formData.jobDetail || ""}
+                          onChange={(e) => setFormData((prev) => ({ ...prev, jobDetail: e.target.value }))}
+                          multiline minRows={2} variant="outlined" margin="normal" fullWidth
+                          inputProps={{ maxLength: DETAIL_MAX }}
+                          helperText={`${DETAIL_HELP} (${String(formData.jobDetail || "").length}/${DETAIL_MAX})`} />
+                        {errors.jobDetail && <span className="error">{errors.jobDetail}</span>}
+                      </div>
+
+
+                      <LocationCascade
+                        variant="mui"
+                        idPrefix="ep-job"
+                        fieldClassName="ep-field"
+                        fullClassName="ep-field--full"
+                        labels={{ country: "Job Country", state: "Job State", district: "Job City", stateText: "Job State / Province", cityText: "Job City", legacy: "Current Job Location" }}
+                        legacyHint="Please re-select your job location."
+                        value={formData.jobLegacy
+                          ? { country: "", state: "", district: formData.jobLegacyText || "" }
+                          : { country: formData.jobCountry, state: formData.jobState, district: formData.jobDistrict }}
+                        onChange={handleJobLocationChange}
+                      />
                       <div className="ep-field ep-field--salary"> <div className="ep-salary"> <div className="ep-salary__amount">
                         <TextField label="Salary" variant="outlined"
                           InputProps={{
@@ -782,21 +837,12 @@ const EditProfile = () => {
                       </div>
                       <div className="ep-field">
                         {/* <label>Father Occupation</label> <input type="text" className="form-control" value="" placeholder="e.g. Web Designer" /> */}
-                        <Autocomplete
-                          value={formData.fatherOccupation}
-                          onChange={handleFatherOccupationChange}
-                          options={professions}
-                          getOptionLabel={(option) => option}
-                          // value={heightValue}
-                          // onChange={(event, newValue) => setHeightValue(newValue)}
-                          renderInput={(params) => (
-                            <TextField
-                              {...params}
-                              label="Father Occupation"
-                              variant="outlined"
-                              margin="normal"
-                            />
-                          )}
+                        <TextField name="fatherOccupation" label="Father Occupation"
+                          value={formData.fatherOccupation || ""}
+                          onChange={(e) => setFormData((prev) => ({ ...prev, fatherOccupation: e.target.value }))}
+                          placeholder="e.g. Goldsmith, Teacher, Business"
+                          inputProps={{ maxLength: 100 }}
+                          variant="outlined" margin="normal" fullWidth
                         />
                       </div>
                       <div className="ep-field">
@@ -806,25 +852,18 @@ const EditProfile = () => {
                       </div>
                       <div className="ep-field">
                         {/* <label>Mother Occupation</label> <input type="text" className="form-control" value="" placeholder="e.g. Web Designer" /> */}
-                        <Autocomplete value={formData.motherOccupation}
-                          onChange={handleMotherOccupationChange}
-                          options={professions}
-                          getOptionLabel={(option) => option}
-                          // value={heightValue}
-                          // onChange={(event, newValue) => setHeightValue(newValue)}
-                          renderInput={(params) => (
-                            <TextField
-                              {...params}
-                              label="Mother Ocupation"
-                              variant="outlined"
-                              margin="normal"
-                            />
-                          )}
+                        <TextField name="motherOccupation" label="Mother Occupation"
+                          value={formData.motherOccupation || ""}
+                          onChange={(e) => setFormData((prev) => ({ ...prev, motherOccupation: e.target.value }))}
+                          placeholder="e.g. Homemaker, Teacher"
+                          inputProps={{ maxLength: 100 }}
+                          variant="outlined" margin="normal" fullWidth
                         />
                       </div>
                       <div className="ep-field">
                         {/* <label>Brothers</label> <input type="text" className="form-control" value="" placeholder="e.g. Web Designer" /> */}
                         <TextField name="brothers" label="Brothers" value={formData.brothers} onChange={handleChange} variant="outlined"
+                          type="number" inputProps={{ min: 0 }}
                           margin="normal" fullWidth
                         // value={maleSiblings}
                         // onChange={handleMaleSiblingsChange}
@@ -834,6 +873,7 @@ const EditProfile = () => {
                         {/* <label>Married Brothers</label><input type="text" className="form-control" value="" placeholder="e.g. Web Designer" /> */}
                         <TextField name="brothersMarried" label="No. of Brothers Married"
                           value={formData.brothersMarried}
+                          type="number" inputProps={{ min: 0 }}
                           onChange={handleChange} variant="outlined"
                           margin="normal" fullWidth
                         // value={maleSiblingsMarried}
@@ -843,6 +883,7 @@ const EditProfile = () => {
                       <div className="ep-field">
                         {/* <label>Sisters</label>  <input type="text" className="form-control" value="" placeholder="e.g. Web Designer" /> */}
                         <TextField name="sisters" label="Sisters" value={formData.sisters} onChange={handleChange} variant="outlined"
+                          type="number" inputProps={{ min: 0 }}
                           margin="normal" fullWidth
                         // value={femaleSiblings}
                         // onChange={handleFemaleSiblingsChange} 
@@ -852,31 +893,25 @@ const EditProfile = () => {
                         {/* <label>Married Sisters</label><input type="text" className="form-control" value="" placeholder="e.g. Web Designer" /> */}
                         <TextField name="sistersMarried" label="No. of Sisters Married"
                           value={formData.sistersMarried}
+                          type="number" inputProps={{ min: 0 }}
                           onChange={handleChange} variant="outlined"
                           margin="normal" fullWidth
                         // value={femaleSiblingsMarried}
                         // onChange={handleFemaleSiblingsMarried} 
                         />
                       </div>
-                      <div className="ep-field">
-                        {/* <label>Current Family Residence</label> <input type="text" className="form-control" value="" placeholder="e.g. Web Designer" /> */}
-                        <Autocomplete
-                          options={cities}
-                          value={formData.familyResidence}
-                          onChange={handleFamilyResidenceChange}
-                          getOptionLabel={(option) => option}
-                          // value={heightValue}
-                          // onChange={(event, newValue) => setHeightValue(newValue)}
-                          renderInput={(params) => (
-                            <TextField
-                              {...params}
-                              label="Current Family Residence"
-                              variant="outlined"
-                              margin="normal"
-                            />
-                          )}
-                        />
-                      </div>
+                      <LocationCascade
+                        variant="mui"
+                        idPrefix="ep-family"
+                        fieldClassName="ep-field"
+                        fullClassName="ep-field--full"
+                        labels={{ country: "Family Residence: Country", state: "Family Residence: State", district: "Family Residence: District / City", stateText: "Family Residence: State / Province", cityText: "Family Residence: City", legacy: "Current Family Residence" }}
+                        legacyHint="Please re-select your family location."
+                        value={formData.familyLegacy
+                          ? { country: "", state: "", district: formData.familyResidence || "" }
+                          : { country: formData.familyCountry, state: formData.familyState, district: formData.familyDistrict }}
+                        onChange={handleFamilyLocationChange}
+                      />
                     </div>
                   </div>
                   {/* <!-- End Physical Info --> 
@@ -984,7 +1019,7 @@ const EditProfile = () => {
               <!-- Full Information --> */}
 
                   <div className="ep-savebar">
-                    <button className="sub ep-savebar__btn" title="Update Profile">Update Profile</button>
+                    <button className="sub ep-savebar__btn" title="Update Profile" disabled={saving}>{saving ? 'Saving...' : 'Update Profile'}</button>
 
                   </div>
                 </div>

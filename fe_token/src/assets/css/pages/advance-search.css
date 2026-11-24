@@ -116,6 +116,23 @@
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
+/* Membership Type select: room for the wider "TYPE" prefix, own chevron,
+   and constrained to the card width so the option list fits on mobile. */
+.adv-select {
+  max-width: 100%;
+  padding: 0 44px 0 86px;
+  letter-spacing: normal;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%236b6870' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 16px center;
+  background-size: 12px 8px;
+}
+
 .adv-input::placeholder {
   color: #a3a1a8;
   font-weight: 500;

@@ -4,9 +4,9 @@
 // src/components/pages/private/Dashboard.js
 import React, { useContext, useEffect, useState, useCallback, useRef } from 'react';
 import Profiles from '../../templates/ImagesLoader';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import Sidebar from './templates/Sidebar';
-import { fetchUserDetails } from '../../../services/userService';
+import { fetchUserDetails, getMyPackage } from '../../../services/userService';
 import { AuthContext } from '../../hooks/AuthContext';
 import {
   getNotifications,
@@ -16,6 +16,7 @@ import {
   rejectProposal
 } from '../../../services/proposalService';
 import { getUnreadMessageCount, fetchInbox } from '../../../services/messageService';
+import { placeholderFor } from '../../../utils/placeholders';
 import { imageUrl } from '../../../utils/imageUrl'; // profile pics now come from proposal query
 import '../../../assets/css/pages/dashboard.css';
 
@@ -36,9 +37,28 @@ const Dashboard = () => {
   const [unreadMessages,      setUnreadMessages]      = useState(0);
   const [totalMessages,       setTotalMessages]       = useState(0);
   const [profileImages,       setProfileImages]       = useState({});
+  // null = loading, 'error' = fetch failed (card hidden), object = loaded
+  const [pkg,                 setPkg]                 = useState(null);
 
   // ✅ fetch-once guard — prevents StrictMode double-invoke
   const hasFetched = useRef(false);
+
+  const navigate = useNavigate();
+  const proposalsRef = useRef(null);
+
+  const scrollToProposals = () => {
+    const el = proposalsRef.current;
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    el.focus({ preventScroll: true });
+  };
+  const goToMessages = () => navigate('/messages');
+  const handleStatKey = (e, action) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      action();
+    }
+  };
 
   // ── Fetch unread + total counts ───────────────────────────────────────────
   // ✅ empty deps — userId is stable (useMemo), no re-creation needed
@@ -85,12 +105,12 @@ const Dashboard = () => {
       received.forEach(n => {
         images[n.sender_id] = imageUrl(n.sender_pic_thumb)
           || imageUrl(n.sender_pic)
-          || Profiles.notfound;
+          || placeholderFor(n.ugender);
       });
       response.forEach(n => {
         images[n.receiver_id] = imageUrl(n.receiver_pic_thumb)
           || imageUrl(n.receiver_pic)
-          || Profiles.notfound;
+          || placeholderFor(n.ugender);
       });
       setProfileImages(images);
 
@@ -114,9 +134,24 @@ const Dashboard = () => {
       const [, , userRes] = await Promise.all([
         fetchAllNotifications(),
         fetchUnreadCounts(),
-        fetchUserDetails(userId).catch(() => null)
+        fetchUserDetails(userId).catch(() => null),
+        getMyPackage()
+          .then(r => {
+            const d = r?.data?.status === 'Success' ? r.data.data : null;
+            const limit = Number(d?.contactLimitPerDay);
+            setPkg(d && d.membershipType && Number.isFinite(limit)
+              ? {
+                  membershipType: String(d.membershipType),
+                  contactLimitPerDay: limit,
+                  contactsUsedToday: Number(d.contactsUsedToday) || 0
+                }
+              : 'error');
+          })
+          .catch(() => setPkg('error'))
       ]);
-      if (userRes?.data?.ufname) setUserName(userRes.data.ufname);
+      // ulname is labelled "Name" in the UI; fall back to ufname if empty
+      const dispName = userRes?.data?.ulname || userRes?.data?.ufname;
+      if (dispName) setUserName(dispName);
     };
 
     init();
@@ -225,7 +260,13 @@ const Dashboard = () => {
                   <ul className="dsh-stats">
 
                     {/* Notifications stat */}
-                    <li className="dsh-stat">
+                    <li
+                      className="dsh-stat dsh-stat--link"
+                      role="button"
+                      tabIndex={0}
+                      onClick={scrollToProposals}
+                      onKeyDown={(e) => handleStatKey(e, scrollToProposals)}
+                    >
                       <div className="dsh-stat__icon">
                         <img src={Profiles.openjobs} alt="" />
                         {/* Unread badge dot */}
@@ -251,7 +292,13 @@ const Dashboard = () => {
                     </li>
 
                     {/* Messages stat */}
-                    <li className="dsh-stat">
+                    <li
+                      className="dsh-stat dsh-stat--link"
+                      role="button"
+                      tabIndex={0}
+                      onClick={goToMessages}
+                      onKeyDown={(e) => handleStatKey(e, goToMessages)}
+                    >
                       <div className="dsh-stat__icon">
                         <img src={Profiles.mail} alt="" />
                         {/* Unread badge dot */}
@@ -290,27 +337,45 @@ const Dashboard = () => {
                   </ul>
 
                   {/* ── Package Info ─────────────────────────────────────── */}
-                  <section className="dsh-card dsh-pkg">
+                  {pkg !== 'error' && (
+                  <section className="dsh-card dsh-pkg" aria-busy={pkg === null}>
                     <h2 className="dsh-section-title">Your Current Package</h2>
                     <ul className="dsh-pkg__grid">
                       <li>
-                        <div className="dsh-pkg__card dsh-pkg__card--gold">
+                        <div className={`dsh-pkg__card dsh-pkg__card--${pkg ? pkg.membershipType.toLowerCase() : 'loading'}`}>
                           <h3>Current Package</h3>
-                          <h6>Gold Package</h6>
+                          {pkg ? (
+                            <h6><span className="dsh-pkg__tier">{pkg.membershipType} Package</span></h6>
+                          ) : (
+                            <h6 className="dsh-pkg__ph">Loading…</h6>
+                          )}
                           <p>🎁 Free – Limited Launch Offer</p>
                         </div>
                       </li>
                       <li>
                         <div className="dsh-pkg__card">
                           <h3>Available Credits</h3>
-                          <h6>Unlimited</h6>
+                          {pkg ? (
+                            <>
+                              <h6>
+                                limit <span className="dsh-pkg__num">{pkg.contactLimitPerDay}</span>{' '}
+                                {pkg.contactLimitPerDay === 1 ? 'contact' : 'contacts'} per day
+                              </h6>
+                              <p className="dsh-pkg__used">
+                                {pkg.contactsUsedToday} of {pkg.contactLimitPerDay} used today
+                              </p>
+                            </>
+                          ) : (
+                            <h6 className="dsh-pkg__ph">Loading…</h6>
+                          )}
                         </div>
                       </li>
                     </ul>
                   </section>
+                  )}
 
                   {/* ── Proposal Tables with Tab Switching ───────────────── */}
-                  <section className="dsh-card">
+                  <section className="dsh-card" id="dash-proposals" ref={proposalsRef} tabIndex={-1}>
 
                     {/* Tab Header */}
                     <div className="dsh-toolbar">
@@ -393,9 +458,10 @@ const Dashboard = () => {
                                     <Link to={`/profiledetails/${n.sender_id}`} className="dsh-avatar-link">
                                       <img
                                         className="dsh-avatar"
-                                        src={profileImages[n.sender_id] || Profiles.notfound}
+                                        src={profileImages[n.sender_id] || placeholderFor(n.ugender)}
+                                        data-gender={n.ugender || ''}
                                         alt={n.ufname}
-                                        onError={e => { e.target.src = Profiles.notfound; }}
+                                        onError={e => { e.target.src = placeholderFor(n.ugender); }}
                                       />
                                     </Link>
                                   </td>
@@ -493,9 +559,10 @@ const Dashboard = () => {
                                     <Link to={`/profiledetails/${n.receiver_id}`} className="dsh-avatar-link">
                                       <img
                                         className="dsh-avatar"
-                                        src={profileImages[n.receiver_id] || Profiles.notfound}
+                                        src={profileImages[n.receiver_id] || placeholderFor(n.ugender)}
+                                        data-gender={n.ugender || ''}
                                         alt={n.ufname}
-                                        onError={e => { e.target.src = Profiles.notfound; }}
+                                        onError={e => { e.target.src = placeholderFor(n.ugender); }}
                                       />
                                     </Link>
                                   </td>

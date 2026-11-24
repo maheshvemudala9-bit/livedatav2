@@ -5,6 +5,8 @@ const mydbController     = require('../controllers/dbController');
 const proposalController = require('../controllers/proposalController');
 const chatController     = require('../controllers/chatController');
 const otpController = require('../controllers/otpController');
+const contactController = require('../controllers/contactController');
+const featuredController = require('../controllers/featuredController');
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 const auth = myController.authenticateToken;
@@ -14,6 +16,10 @@ router.post('/sendOtp',   otpController.sendOtp);
 router.post('/verifyOtp', otpController.verifyOtp);
 // ─── Forgot Password (Public — no auth) ──────────────────────────────────────
 router.post('/resetPassword', mydbController.resetPassword); // ← add this
+// ─── Contact Us (Public — optional auth, records uid when logged in) ─────────
+router.post('/contactUs', contactController.submitContactQuery);
+// ─── Featured Brides & Grooms for the Home page (Public — optional auth) ─────
+router.get('/getFeaturedProfiles', featuredController.getFeaturedProfiles);
 // ─── Auth (Public) ────────────────────────────────────────────────────────────
 router.post('/login',    mydbController.login);
 router.post('/register', mydbController.register);
@@ -36,6 +42,7 @@ router.post('/Fetchlistdata',                 auth, mydbController.Fetchlistdata
 router.post('/getUserRecords',                auth, mydbController.getUserRecords);
 router.post('/UpdateUserRegistrationDetails', auth, mydbController.UpdateUserRegistrationDetails);
 router.post('/UpdateProfileStatus',           auth, mydbController.updateUserProfileStatus);
+router.get('/getMyPackage',                   auth, mydbController.getMyPackage);
 
 // ─── Protected Proposal & Notification APIs ───────────────────────────────────
 router.post('/sendProposal',                auth, proposalController.sendProposal);
@@ -56,6 +63,11 @@ router.post('/getUnreadMessageCount', auth, chatController.getUnreadMessageCount
 router.post('/markMessagesRead',      auth, chatController.markMessagesRead);
 router.post('/deleteMessage',         auth, chatController.deleteMessage);
 router.post('/getConversation',       auth, chatController.getConversation);
+
+// ─── Block / Unblock ─────────────────────────────────────────────────────────
+router.post('/blockUser',      auth, mydbController.blockUser);
+router.post('/unblockUser',    auth, mydbController.unblockUser);
+router.post('/getBlockStatus', auth, mydbController.getBlockStatus);
 // ─── Disguised route — public name hides real endpoint ───────────────────────
 // Exposed:  POST /api/getContactInfo   ← user sees this
 // Internal: runs getUserMobile logic   ← real function, hidden

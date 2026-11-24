@@ -76,13 +76,16 @@
 .msg-frame .msg-contacts {
   flex: 1;
   min-height: 0;
+  max-width: 100%;
   padding: 6px;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 
 .msg-frame .msg-contact-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr); /* an auto track grew to the nowrap preview width */
   gap: 2px;
   margin: 0;
   padding: 0;
@@ -90,6 +93,7 @@
 }
 
 .msg-frame .msg-contact {
+  min-width: 0;
   margin: 0;
   border-radius: 12px;
   list-style: none;
@@ -146,8 +150,9 @@
 }
 
 .msg-frame .msg-contact__meta {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
 }
 
 .msg-frame .msg-contact__name {
@@ -189,6 +194,18 @@
   color: #fff;
   font-size: 11px;
   font-weight: 700;
+}
+
+.msg-frame .msg-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .msg-frame .msg-state {
@@ -314,6 +331,76 @@
 .msg-frame .msg-chat__tool:focus-visible {
   outline: none;
   box-shadow: var(--ring);
+}
+
+/* Three-dots menu (View Profile / Block User) */
+.msg-frame .msg-chat__menu-wrap {
+  position: relative;
+}
+
+.msg-frame .msg-chat__menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 20;
+  min-width: 170px;
+  margin: 4px 0 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+
+.msg-frame .msg-chat__menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.msg-frame .msg-chat__menu-item:hover:not(:disabled) {
+  background: var(--brand-50);
+  color: var(--brand);
+}
+
+.msg-frame .msg-chat__menu-item:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Composer replaced while the conversation is blocked */
+.msg-frame .msg-composer--blocked {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.msg-frame .msg-unblock-btn {
+  padding: 6px 16px;
+  border: 1px solid var(--brand);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--brand);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.msg-frame .msg-unblock-btn:hover:not(:disabled) {
+  background: var(--brand);
+  color: #fff;
 }
 
 .msg-frame .msg-chat__tool--static {
@@ -698,6 +785,33 @@
     min-height: 62px;
   }
 
+  .msg-frame .msg-contact__name,
+  .msg-frame .msg-contact__preview {
+    display: block;
+    max-width: 100%;
+  }
+
+  /* Unread conversation: tinted row, accent bar, bolder text, count pill */
+  .msg-frame .msg-contact--unread {
+    background: var(--brand-50);
+    box-shadow: inset 3px 0 0 var(--brand);
+  }
+
+  .msg-frame .msg-contact--unread .msg-contact__name {
+    font-weight: 700;
+  }
+
+  .msg-frame .msg-contact--unread .msg-contact__preview {
+    font-weight: 600;
+    color: var(--ink);
+  }
+
+  /* Open row keeps its selected look; the accent bar still shows if unread */
+  .msg-frame .msg-contact--unread.is-active {
+    background: var(--brand-100);
+  }
+
+
   /* Only the inbox is visible until a conversation is opened */
   .msg-frame .msg-chat {
     display: none;
@@ -706,13 +820,14 @@
   /* Open chat: fixed full-screen layer covering the page */
   .msg-frame.is-chat-open {
     position: fixed;
-    top: 0;
+    top: var(--chat-top, 0px);
     right: 0;
-    bottom: 0;
+    bottom: auto;
     left: 0;
     z-index: 1300; /* above the mobile bottom nav (1200) so the composer is not covered */
     height: 100vh;
     height: 100dvh;
+    height: var(--chat-vh, 100dvh); /* set from visualViewport by Messages.js */
     min-height: 0;
     border: 0;
     border-radius: 0;
@@ -753,6 +868,21 @@
 
   .msg-frame .msg-composer {
     padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+  }
+
+  /* 16px+ stops iOS Safari zooming the page when the input is focused */
+  .msg-frame .msg-composer__input {
+    font-size: 16px;
+  }
+
+  .msg-frame.is-chat-open .msg-thread {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+
+  /* Page must not scroll behind the open chat */
+  body.msg-chat-open {
+    overflow: hidden;
   }
 }
 

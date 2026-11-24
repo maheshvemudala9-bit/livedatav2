@@ -116,17 +116,26 @@ const AdminPhotos = () => {
           {rows.map((g) => (
             <div key={g.id} className="adm-photo-card">
               <div className="adm-photo-card__thumb">
-                <img
-                  src={imageUrl(g.imagepath)}
-                  alt={g.matId || `MAT${g.uid}`}
-                  className="adm-photo-card__img"
-                />
+                {g.imagepath ? (
+                  <img
+                    src={imageUrl(g.imagepath)}
+                    alt={g.matId || `MAT${g.uid}`}
+                    className="adm-photo-card__img"
+                  />
+                ) : (
+                  <div className="adm-muted" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', minHeight: 120, textAlign: 'center' }}>
+                    Rejected - photo removed
+                  </div>
+                )}
               </div>
               <div className="adm-photo-card__meta">
                 <div><strong>{g.matId || `MAT${g.uid}`}</strong>{g.isprofile ? ' • profile' : ''}</div>
                 <div className="adm-muted">{g.name}</div>
                 <div className="adm-muted">Status: {g.status}</div>
               </div>
+              {g.status === 'rejected' ? (
+                <div className="adm-photo-card__controls adm-muted">Rejected photos cannot be restored.</div>
+              ) : (
               <div className="adm-photo-card__controls">
                 <select
                   value={statusDraft[g.id] ?? g.status ?? 'pending'}
@@ -137,6 +146,7 @@ const AdminPhotos = () => {
                 </select>
                 <button type="button" onClick={() => handleUpdate(g.id)} className="adm-btn adm-btn--dark adm-btn--sm">Update</button>
               </div>
+              )}
             </div>
           ))}
         </div>

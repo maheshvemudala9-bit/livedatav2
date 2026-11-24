@@ -317,6 +317,11 @@ const jsonArr={
     "districtlabel": "Yadadri Bhuvanagiri (TG)", "state": "Telangana",
     "District": "yadadri_bhuvanagiri",
     "State_Dist": "TS_yadadri_bhuvanagiri"
+  }  ,
+  {
+    "districtlabel": "Other", "state": "Other",
+    "District": "other",
+    "State_Dist": "other"
   }
 ],
   // end of districtData
@@ -549,6 +554,7 @@ const jsonArr={
   },{"country": "Yemen"
   },{"country": "Zambia"
   },{"country": "Zimbabwe"
+  },{"country": "Other"
   }
 ],
   casteData:[
@@ -597,6 +603,8 @@ const jsonArr={
   { "rasi": "Tula (Libra)" },
   { "rasi": "Vrischika (Scorpio)" },
   { "rasi": "Vrishabha (Taurus)" }
+  ,
+  { "rasi": "Dont know" }
 ],
 // end of rasiData
   nakshatrasData: [
@@ -626,7 +634,8 @@ const jsonArr={
   { "nakshatra": "Uttara Ashadha" },
   { "nakshatra": "Uttara Bhadrapada" },
   { "nakshatra": "Uttara Phalguni" },
-  { "nakshatra": "Vishakha" }
+  { "nakshatra": "Vishakha" },
+  { "nakshatra": "Dont Know" }
 ],
 // end of nakshatrasData
    heightData :[
@@ -843,6 +852,7 @@ const jsonArr={
   { "occupation": "Investment Banker" },
   { "occupation": "Journalist / Media Professional" },
   { "occupation": "Judge" },
+  { "occupation": "Judicial Department" },
   { "occupation": "Lawyer / Advocate" },
   { "occupation": "Lecturer / Professor" },
   { "occupation": "Legal Advisor" },
@@ -872,6 +882,7 @@ const jsonArr={
   { "occupation": "Tele-caller" },
   { "occupation": "Trader / Merchant" },
   { "occupation": "Tutor" },
+  { "occupation": "Type Writer" },
   { "occupation": "Unemployed" },
   { "occupation": "Veterinarian" },
   { "occupation": "Welder" },

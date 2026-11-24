@@ -7,12 +7,15 @@
 import React from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import adminApi from './adminApi';
+import { useAdminAuth } from './AdminAuthContext';
 import '../../assets/css/pages/admin.css';
+import logoWhite from '../../assets/images/logo/logo-white-trim.png';
 
 const navLinkClass = ({ isActive }) => `adm-nav__link${isActive ? ' is-active' : ''}`;
 
 const AdminLayout = () => {
   const navigate = useNavigate();
+  const { admin, can } = useAdminAuth();
 
   const handleLogout = async () => {
     try {
@@ -28,9 +31,7 @@ const AdminLayout = () => {
     <div className="adm-shell">
       <aside className="adm-sidebar">
         <div className="adm-brand">
-          <span className="adm-brand__icon">
-            <i className="fa-solid fa-user-shield" aria-hidden="true" />
-          </span>
+          <img className="adm-brand__logo" src={logoWhite} width="602" height="148" alt="TeluguSambandham – Telugu Matrimony" />
           <h2 className="adm-brand__title">Admin Panel</h2>
         </div>
         <nav className="adm-nav">
@@ -50,9 +51,25 @@ const AdminLayout = () => {
             <i className="fa-solid fa-envelope" aria-hidden="true" />
             <span>Messages List</span>
           </NavLink>
-          <NavLink to="/adminhub/matrimony/contact-limit" className={navLinkClass}>
-            <i className="fa-solid fa-sliders" aria-hidden="true" />
-            <span>Contact Limit</span>
+          {can('settings.contactLimit') && (
+            <NavLink to="/adminhub/matrimony/contact-limit" className={navLinkClass}>
+              <i className="fa-solid fa-sliders" aria-hidden="true" />
+              <span>Contact Limit</span>
+            </NavLink>
+          )}
+          {can('emailOtps.view') && (
+            <NavLink to="/adminhub/matrimony/email-otps" className={navLinkClass}>
+              <i className="fa-solid fa-key" aria-hidden="true" />
+              <span>Email OTPs</span>
+            </NavLink>
+          )}
+          <NavLink to="/adminhub/matrimony/contact-queries" className={navLinkClass}>
+            <i className="fa-solid fa-envelope-open-text" aria-hidden="true" />
+            <span>Contact Queries</span>
+          </NavLink>
+          <NavLink to="/adminhub/matrimony/blocked-users" className={navLinkClass}>
+            <i className="fa-solid fa-ban" aria-hidden="true" />
+            <span>Blocked Users</span>
           </NavLink>
         </nav>
       </aside>
@@ -65,7 +82,7 @@ const AdminLayout = () => {
               <span className="adm-ident__avatar">
                 <i className="fa-solid fa-user-shield" aria-hidden="true" />
               </span>
-              Administrator
+              {admin ? `${admin.name || admin.username} (${admin.role})` : 'Administrator'}
             </span>
             <button type="button" className="adm-btn adm-btn--danger" onClick={handleLogout}>
               <i className="fa-solid fa-right-from-bracket" aria-hidden="true" />

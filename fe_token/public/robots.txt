@@ -1,3 +1,17 @@
-# https://www.robotstxt.org/robotstxt.html
 User-agent: *
-Disallow:
+Allow: /
+Disallow: /adminhub/
+Disallow: /dashboard
+Disallow: /editprofile
+Disallow: /messages
+Disallow: /addgallery
+Disallow: /profilesecurity
+Disallow: /changepassword
+Disallow: /closeaccount
+Disallow: /profiledetails/
+Disallow: /profiles
+Disallow: /advancesearch
+Disallow: /impersonate
+Disallow: /api/
+
+Sitemap: https://telugusambandham.com/sitemap.xml

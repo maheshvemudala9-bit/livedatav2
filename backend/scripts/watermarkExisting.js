@@ -6,8 +6,9 @@
 //
 // For each usergallery row where watermarked = false, it re-renders the ORIGINAL
 // and MEDIUM files in place (compositing the watermark at each file's current
-// dimensions) and leaves the THUMB untouched (thumbs are never watermarked).
-// Then it sets watermarked = true, so the script is SAFE TO RE-RUN — already
+// dimensions). In default mode the THUMB is stamped too (these rows' thumbs are
+// still clean); with --force thumbs are left untouched (they may already carry
+// the stamp). Then it sets watermarked = true, so the script is SAFE TO RE-RUN — already
 // processed rows are skipped (no double-watermarking).
 //
 // Prereq: migration 005 (adds usergallery.watermarked) must be applied first.
@@ -37,7 +38,7 @@ const sharp = require('sharp');
 require('dotenv').config({ path: path.join(__dirname, '..', 'src', '.env') });
 
 const pool = require('../src/services/pool');
-const { buildWatermarkSvg } = require('../src/services/imageService');
+const { buildWatermarkSvg, ensureWatermarkMetrics } = require('../src/services/imageService');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'src', 'public');
 
@@ -66,13 +67,14 @@ async function main() {
   // so the corrected TEXT watermark replaces the old boxed one. Default mode
   // keeps the original idempotent behavior (only watermarked=false rows).
   const force = process.argv.includes('--force') || process.env.FORCE === '1';
+  await ensureWatermarkMetrics(); // measure text extent for the bottom-edge clamp
 
   const { rows } = await pool.query(
     force
-      ? `SELECT id, imagepath, imagepath_medium
+      ? `SELECT id, imagepath, imagepath_medium, imagepath_thumb
            FROM public.usergallery
           ORDER BY id`
-      : `SELECT id, imagepath, imagepath_medium
+      : `SELECT id, imagepath, imagepath_medium, imagepath_thumb
            FROM public.usergallery
           WHERE watermarked = false
           ORDER BY id`
@@ -83,9 +85,13 @@ async function main() {
 
   for (const row of rows) {
     try {
-      // original at q85, medium at q80 (matches upload pipeline); thumb untouched.
+      // original at q85, medium at q80, thumb at q70 (matches upload pipeline).
       await watermarkFileInPlace(row.imagepath, 85);
       await watermarkFileInPlace(row.imagepath_medium, 80);
+      // Thumbs of watermarked=false rows are guaranteed clean, so stamp them.
+      // In --force mode a thumb may already carry the new stamp (uploaded after
+      // thumbs were watermarked), so skip it there to avoid double-stamping.
+      if (!force) await watermarkFileInPlace(row.imagepath_thumb, 70);
       await pool.query(`UPDATE public.usergallery SET watermarked = true WHERE id = $1`, [row.id]);
       done++;
       console.log(`  ✓ id=${row.id}`);

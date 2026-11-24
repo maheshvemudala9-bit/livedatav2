@@ -3,11 +3,12 @@ import '../../assets/css/style.css';
 import '../../assets/css/bootstrap.min.css';
 // Removed duplicate imports: bootstrap.css (same framework as bootstrap.min.css)
 // and a local all.min.css (FontAwesome is already loaded globally in index.js).
-import profiles from "../templates/ImagesLoader";
+import { placeholderFor } from '../../utils/placeholders';
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { AuthContext } from '../hooks/AuthContext';
 import "./dropdown.css";
 import { imageUrl, approvedProfileImage } from '../../utils/imageUrl';
+import logoHeader from '../../assets/images/logo/logo-header-trim.png';
 
 // import api from '../../utils/api';
 import { fetchUserDetails, fetchUserGallery } from '../../services/userService';
@@ -107,10 +108,11 @@ const Header = () => {
   // Only show the profile image if it is APPROVED (the owner's own gallery can
   // include pending/rejected images, which must not appear as the avatar).
   const approvedProfile = approvedProfileImage(getGallery);
+  const myGender = userDetails?.ugender || localStorage.getItem('userGender') || '';
   const profilePic = imageUrl(
     approvedProfile?.imagepath_thumb
     || approvedProfile?.imagepath
-  ) || profiles.authorimg;
+  ) || placeholderFor(myGender);
 
   // ─── Navbar ───────────────────────────────────────────────────────────────
   const [isActive, setIsActive] = useState(false);
@@ -284,7 +286,7 @@ const Header = () => {
       <li key={`recv-${id}`} className="hdr-notif">
         <p>
           <Link
-            to="/dashboard"                                 // ← clicking a proposal opens the full list
+            to={sender_id ? `/profiledetails/${sender_id}` : '/dashboard'} // ← name opens the sender's profile
             onClick={() => setIsNotificationVisible(false)}  // ← closes bell dropdown
             className="hdr-notif__name"
           >
@@ -333,7 +335,7 @@ const Header = () => {
       <li key={`resp-${id}`} className="hdr-notif">
         <p>
           <Link
-            to="/dashboard"                                 // ← clicking a proposal opens the full list
+            to={receiver_id ? `/profiledetails/${receiver_id}` : '/dashboard'} // ← name opens the responder's profile
             onClick={() => setIsNotificationVisible(false)}  // ← closes bell dropdown
             className="hdr-notif__name"
           >
@@ -390,32 +392,24 @@ const Header = () => {
           <div className="site-header__bar">
 
             {/* ── Logo (left) ── */}
-            <Link to="/" className="site-logo" aria-label="Home">
+            <Link to={loginuser ? "/profiles" : "/"} className="site-logo" aria-label={loginuser ? "Matches" : "Home"}>
               <img
-                src={imageUrl("/uploads/gallery/telugu_sambandham_navbar_v16.png")}
-                alt="Logo"
+                src={logoHeader}
+                width="602"
+                height="148"
+                alt="TeluguSambandham – Telugu Matrimony"
               />
             </Link>
 
-            {/* ── Tagline (center on mobile, beside logo on desktop) ── */}
-            <div className={isMobile ? 'site-brand is-mobile' : 'site-brand'}>
-              {isMobile ? (
-                // Compact centered tagline for mobile
-                <>
-                  <div className="site-brand__eyebrow">Trusted Matrimony</div>
-                  <div className="site-brand__name"><strong>Viswabrahmin</strong></div>
-                  <div className="site-brand__caption">Community</div>
-                </>
-              ) : (
-                <>
-                  <div className="site-brand__eyebrow">Trusted Matrimony</div>
-                  <div className="site-brand__name">
-                    For <strong>Viswabrahmin</strong>
-                  </div>
-                  <div className="site-brand__caption">Community</div>
-                </>
-              )}
-            </div>
+            {/* ── Tagline: one line beside the logo on desktop; hidden on mobile
+                   (the logo already carries the name, and the hero says who it's for) ── */}
+            {!isMobile && (
+              <div className="site-brand">
+                <div className="site-brand__line">
+                  For <strong>Viswabrahmin</strong> Families
+                </div>
+              </div>
+            )}
 
             <div className="site-actions">
 
@@ -522,27 +516,19 @@ const Header = () => {
                       <ul className="hdr-menu hdr-menu--user"
                         style={{ display: isDropdownVisible ? 'block' : 'none' }}>
                         <li className="hdr-profile">
-                          <img src={profilePic} alt="Profile" />
+                          <img src={profilePic} alt="Profile" data-gender={myGender} />
                           <div>
                             <span className="hdr-profile__name">{userDetails.ufname || 'User'}  MAT{userDetails.uid || '---'}</span>
-                            <Link to="/editprofile" className={`hdr-profile__edit${currentPath === '/editprofile' ? ' is-active' : ''}`}>
-                              <i className="fas fa-user-edit"></i> Edit Profile
+                            {/* Profile row links to the dashboard ("My Account") */}
+                            <Link to="/dashboard" className={`hdr-profile__edit${currentPath === '/dashboard' ? ' is-active' : ''}`}>
+                              <i className="fas fa-user-circle"></i> Go to My Account
                             </Link>
                           </div>
                         </li>
-                        <li className={`hdr-menu__item${currentPath === '/dashboard' ? ' is-active' : ''}`}>
-                          <Link to="/dashboard">
-                            <i className="fas fa-tachometer-alt"></i> Dashboard
-                          </Link>
-                        </li>
-                        <li className={`hdr-menu__item${currentPath === '/addgallery' ? ' is-active' : ''}`}>
-                          <Link to="/addgallery">
-                            <i className="fas fa-images"></i> Gallery
-                          </Link>
-                        </li>
-                        <li className={`hdr-menu__item${currentPath === '/changepassword' ? ' is-active' : ''}`}>
-                          <Link to="/changepassword">
-                            <i className="fas fa-key"></i> Change Password
+                        {/* Help & Support, then Close My Account and Logout below. */}
+                        <li className={`hdr-menu__item hdr-menu__item--group-end${currentPath === '/contact-us' ? ' is-active' : ''}`}>
+                          <Link to="/contact-us">
+                            <i className="fas fa-headset"></i> Help &amp; Support
                           </Link>
                         </li>
                         {/* Close My Account: red danger styling applies only when
@@ -584,8 +570,10 @@ const Header = () => {
         </div>
       </header>
 
-      {/* Navbar — hidden for guests, shown only when logged in */}
-      {loginuser && (
+      {/* Navbar — hidden for guests, shown only when logged in.
+          Not rendered on mobile (< 768px): the BottomNav already provides
+          Matches / Search / Dashboard there. */}
+      {loginuser && !isMobile && (
       <nav className="navbar navbar-expand-lg navbar-dark hdr-subnav">
         <div className="container">
           <a className="navbar-brand" href="#" onClick={e => e.preventDefault()}>
@@ -605,10 +593,10 @@ const Header = () => {
           <div className={isActive ? 'collapse navbar-collapse show' : 'collapse navbar-collapse'}>
             <ul className="navbar-nav mr-auto">
               <li className="nav-item">
-                <Link to="/profiles" className="nav-link">Matches</Link>
+                <Link to="/profiles" state={{ scrollToList: Date.now() }} className="nav-link">Matches</Link>
               </li>
                <li className="nav-item">
-                <Link to="/advancesearch" className="nav-link">Advanced Search</Link>
+                <Link to="/advancesearch" className="nav-link">Search By ID</Link>
               </li>
                <li className="nav-item">
                 <Link to="/dashboard" className="nav-link">Dashboard</Link>

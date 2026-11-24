@@ -6,10 +6,11 @@ import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { AuthContext } from '../../../hooks/AuthContext';
 import { fetchUserDetails, fetchUserGallery } from '../../../../services/userService';
 import { getUnreadMessageCount } from '../../../../services/messageService';
-import profilepics from '../../../templates/ImagesLoader';
+import { placeholderFor } from '../../../../utils/placeholders';
 import { PhotoProvider, PhotoView } from 'react-photo-view';
 import 'react-photo-view/dist/react-photo-view.css';
 import { imageUrl, approvedOnly, approvedProfileImage } from '../../../../utils/imageUrl';
+import { displayLocation } from '../../../../data/locations';
 
 const Sidebar = () => {
   const navigate  = useNavigate();
@@ -29,11 +30,6 @@ const Sidebar = () => {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  // Nav starts collapsed on mobile, always open on desktop.
-  const [navOpen, setNavOpen] = useState(!(window.innerWidth < 768));
-  // Keep nav shown on desktop even if the window is resized up from mobile.
-  useEffect(() => { if (!isMobile) setNavOpen(true); }, [isMobile]);
-
   // Gallery section is shown everywhere on desktop, but on mobile only on the
   // Gallery page itself (/addgallery).
   const showGallerySection = !isMobile || location.pathname === '/addgallery';
@@ -47,7 +43,6 @@ const Sidebar = () => {
   // lands focused on that section instead of at the top (behind the sidebar).
   const goToTab = (e, path) => {
     if (e) e.preventDefault();
-    if (isMobile) setNavOpen(false); // collapse the menu after a selection
     navigate(path);
     // Let the destination render, then scroll its content column into view.
     setTimeout(() => {
@@ -64,6 +59,8 @@ const Sidebar = () => {
   const userId     = React.useMemo(() => localStorage.getItem("userId"), []);
   // ✅ fetch-once guard — prevents StrictMode double-invoke and re-fetch on parent re-render
   const hasFetched = useRef(false);
+  // Own gender: loaded user details first, login-time localStorage value until then.
+  const myGender = userDetails.ugender || localStorage.getItem('userGender') || '';
 
   const logoutHandler = (e) => {
     e.preventDefault();
@@ -79,14 +76,15 @@ const Sidebar = () => {
     const fetchUserData = async () => {
       try {
         // ✅ All 3 calls in parallel — faster than sequential
+        // The unread count only feeds the desktop Messages item, so skip it on mobile.
         const [userDetailsRes, galleryRes, msgRes] = await Promise.all([
           fetchUserDetails(userId),
           fetchUserGallery(userId),
-          getUnreadMessageCount(userId)
+          window.innerWidth < 768 ? Promise.resolve(null) : getUnreadMessageCount(userId)
         ]);
         setUserDetails(userDetailsRes.data);
         setGetGallery(galleryRes.data);
-        if (msgRes.data.status === 'Success') {
+        if (msgRes && msgRes.data.status === 'Success') {
           setUnreadMessages(msgRes.data.unreadCount || 0);
         }
       } catch (error) {
@@ -119,14 +117,15 @@ const Sidebar = () => {
                       <img
                         src={imageUrl(profileFile.imagepath_medium) || imageUrl(profileFile.imagepath)}
                         alt="Profile"
+                        data-gender={myGender}
                       />
                     </PhotoView>
                   ) : (
-                    <img src={profilepics.notfound} alt="Default profile" />
+                    <img src={placeholderFor(myGender)} alt="Default profile" />
                   );
                 })()
               ) : (
-                <img src={profilepics.notfound} alt="Default profile" />
+                <img src={placeholderFor(myGender)} alt="Default profile" />
               )}
             </PhotoProvider>
           </div>
@@ -153,27 +152,43 @@ const Sidebar = () => {
           </h2>
           <p><i className="fa fa-phone" aria-hidden="true"></i> {userDetails.uphone}</p>
           <p><i className="fa fa-envelope" aria-hidden="true"></i>{userDetails.uemail}</p>
-          <p><i className="fas fa-map-marker-alt"></i>{userDetails.upresentloc ? userDetails.upresentloc : "Not Available"},{userDetails.ustate}</p>
+          <p><i className="fas fa-map-marker-alt"></i>{userDetails.upresentloc ? displayLocation(userDetails.upresentloc) : "Not Available"},{displayLocation(userDetails.ustate)}</p>
         </div>
       </div>
       )}
 
       <div className="sbr__card sbr__menu">
-        {/* Mobile-only collapse/expand toggle for the menu */}
+        {/* Mobile: always-visible "My Account" title with a single row of 4 icon tiles. */}
         {isMobile && (
-          <button
-            type="button"
-            className={`sbr__toggle ${navOpen ? 'is-open' : ''}`}
-            onClick={() => setNavOpen(o => !o)}
-            aria-expanded={navOpen}
-            aria-label={navOpen ? 'Collapse menu' : 'Expand menu'}
-          >
-            <span><i className="fas fa-bars"></i> My Account</span>
-            <i className={navOpen ? 'fas fa-chevron-up' : 'fas fa-chevron-down'} aria-hidden="true"></i>
-          </button>
+          <>
+            <h2 className="sbr__acct-title">My Account</h2>
+            <div className="sbr__quick">
+              {[
+                { to: '/editprofile',    icon: 'fas fa-edit',       label: 'Edit Profile' },
+                { to: '/addgallery',     icon: 'fas fa-images',     label: 'Gallery' },
+                { to: '/changepassword', icon: 'fas fa-key',        label: 'Change Password' },
+                { to: '/profilesecurity', icon: 'fas fa-shield-alt', label: 'Profile Security' },
+              ].map(item => {
+                const active = isActivePath(item.to);
+                return (
+                  <Link
+                    key={item.to}
+                    to={item.to}
+                    className={`sbr__quick-item${active ? ' is-active' : ''}`}
+                    aria-label={item.label}
+                    aria-current={active ? 'page' : undefined}
+                    onClick={(e) => goToTab(e, item.to)}
+                  >
+                    <i className={item.icon} aria-hidden="true"></i>
+                    <span>{item.label}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          </>
         )}
 
-        {navOpen && (
+        {!isMobile && (
         <ul className="sbr__nav">
           <li><Link className={`sbr__link${isActivePath('/dashboard') ? ' is-active' : ''}`} to="/dashboard" onClick={(e) => goToTab(e, '/dashboard')}><i className="fas fa-tachometer-alt"></i> Dashboard</Link></li>
           <li><Link className={`sbr__link${isActivePath('/editprofile') ? ' is-active' : ''}`} to="/editprofile" onClick={(e) => goToTab(e, '/editprofile')}><i className="fas fa-edit"></i> Edit Profile</Link></li>

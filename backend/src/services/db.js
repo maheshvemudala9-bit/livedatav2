@@ -1,6 +1,9 @@
 const { convertCredentials, hashPassword } = require('./passwordfunction');
 const pool = require('./pool');
 var format = require('pg-format');
+const imageService = require('./imageService');
+const blocks = require('./blocks');
+const { locNormSql, normalizeLocName, stateFilterValues, jobLocationCandidates } = require('./locationFields');
 
 //Registration
 
@@ -47,10 +50,10 @@ async function ValidateUser(dataToSave) {
 async function saveObjectsToDatabase(obj) {
   const client = await pool.connect();
   try {
-    const query = 'INSERT INTO users (relation, ucreated, ufname, ulname, udob, utob, ugender,  upob, upresentloc, uphone, uheight, ucaste, uemail, upassword, ujob, upackage,ucountry,ustate) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,$17,$18)  RETURNING uid  ';
+    const query = 'INSERT INTO users (relation, ucreated, ufname, ulname, udob, utob, ugender,  upob, upresentloc, uphone, uheight, ucaste, uemail, upassword, ujob, upackage,ucountry,ustate,employed_in,salary_amount,salary_unit) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,$17,$18,$19,$20,$21)  RETURNING uid  ';
     // Store email lowercased so new rows are canonical (case-insensitive).
     const normalizedEmail = String(obj.uemail || '').trim().toLowerCase();
-    const values = [obj.relation, obj.ucreated, obj.ufname, obj.ulname, obj.udob, obj.utob, obj.ugender, obj.upob, obj.upresentloc, obj.uphone, obj.uheight, obj.ucaste, normalizedEmail, obj.upassword, obj.ujob, obj.upackage, obj.ucountry, obj.ustate];
+    const values = [obj.relation, obj.ucreated, obj.ufname, obj.ulname, obj.udob, obj.utob, obj.ugender, obj.upob, obj.upresentloc, obj.uphone, obj.uheight, obj.ucaste, normalizedEmail, obj.upassword, obj.ujob, obj.upackage, obj.ucountry, obj.ustate, obj.employed_in ?? null, obj.salary_amount ?? null, obj.salary_unit ?? null];
     const result = await client.query(query, values);
     const newUid = result.rows[0].uid;
 
@@ -70,7 +73,7 @@ async function saveObjectsToDatabase(obj) {
 //end of Registration.
 // ...existing code...
 // ...existing code...
-const GetAllUsers = async (page = 1, limit = 20, gender = null) => {
+const GetAllUsers = async (page = 1, limit = 20, gender = null, viewerUid = null) => {
   try {
     const client = await pool.connect();
     try {
@@ -89,26 +92,29 @@ const GetAllUsers = async (page = 1, limit = 20, gender = null) => {
         (SELECT CASE WHEN a.hide_picture = true THEN NULL ELSE g.imagepath_thumb END FROM usergallery g WHERE g.uid = a.uid AND g.isprofile = true AND g.status = 'approved' LIMIT 1) AS profile_image_thumb
       `;
 
+      // Build WHERE conditions + params; the viewer param (when given) hides
+      // users who have blocked the viewer from both data and count queries.
+      const conds = ["a.profile_status = 'approved'"];
+      const params = [];
       if (genderParam) {
-        const dataQuery = {
-          text: `SELECT a.*, ${profileImageSql} FROM users a WHERE a.ugender = $1 AND a.profile_status = 'approved' ORDER BY a.uid LIMIT $2 OFFSET $3`,
-          values: [genderParam, limit, offset]
-        };
-        const countQuery = {
-          text: "SELECT COUNT(*) AS total FROM users WHERE ugender = $1 AND profile_status = 'approved'",
-          values: [genderParam]
-        };
-        const [dataRes, countRes] = await Promise.all([client.query(dataQuery), client.query(countQuery)]);
-        return { rows: dataRes.rows, total: parseInt(countRes.rows[0].total, 10) };
-      } else {
-        const dataQuery = {
-          text: `SELECT a.*, ${profileImageSql} FROM users a WHERE a.profile_status = 'approved' ORDER BY a.uid LIMIT $1 OFFSET $2`,
-          values: [limit, offset]
-        };
-        const countQuery = { text: "SELECT COUNT(*) AS total FROM users WHERE profile_status = 'approved'" };
-        const [dataRes, countRes] = await Promise.all([client.query(dataQuery), client.query(countQuery)]);
-        return { rows: dataRes.rows, total: parseInt(countRes.rows[0].total, 10) };
+        params.push(genderParam);
+        conds.push(`a.ugender = $${params.length}`);
       }
+      if (viewerUid != null) {
+        params.push(viewerUid);
+        conds.push(blocks.notBlockedBySql('a.uid', `$${params.length}`));
+      }
+      const whereSql = conds.join(' AND ');
+      const dataQuery = {
+        text: `SELECT a.*, ${profileImageSql} FROM users a WHERE ${whereSql} ORDER BY a.uid LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        values: params.concat([limit, offset])
+      };
+      const countQuery = {
+        text: `SELECT COUNT(*) AS total FROM users a WHERE ${whereSql}`,
+        values: params
+      };
+      const [dataRes, countRes] = await Promise.all([client.query(dataQuery), client.query(countQuery)]);
+      return { rows: dataRes.rows, total: parseInt(countRes.rows[0].total, 10) };
     } finally {
       client.release();
     }
@@ -216,7 +222,7 @@ const DeleteUserGalleryRecord = async (galleryId, userId) => {
   try {
     // 🔐 Step 1: Verify ownership + get image path for file deletion
     const checkQuery = {
-      text: 'SELECT id, imagepath, isprofile FROM usergallery WHERE id = $1 AND uid = $2',
+      text: 'SELECT id, imagepath, imagepath_medium, imagepath_thumb, isprofile FROM usergallery WHERE id = $1 AND uid = $2',
       values: [galleryId, userId]
     };
     const checkResult = await client.query(checkQuery);
@@ -227,31 +233,19 @@ const DeleteUserGalleryRecord = async (galleryId, userId) => {
     
     const record = checkResult.rows[0];
     
-    // 🛡️ Step 2: Block deletion of profile picture
-    if (record.isprofile === true) {
-      return { 
-        success: false, 
-        message: 'Cannot delete profile picture. Please set another image as profile first.' 
-      };
-    }
-    
-    // 🗑️ Step 3: Delete from database
+    // 🗑️ Step 2: Delete from database (profile photo may be deleted too)
     const deleteQuery = {
-      text: 'DELETE FROM usergallery WHERE id = $1 RETURNING id',
-      values: [galleryId]
+      text: 'DELETE FROM usergallery WHERE id = $1 AND uid = $2 RETURNING id',
+      values: [galleryId, userId]
     };
     const deleteResult = await client.query(deleteQuery);
     
-    // 📁 Step 4: Delete physical file (if exists)
-    if (record.imagepath) {
-      const fs = require('fs');
-      const path = require('path');
-      // Adjust path based on your project structure
-      const fullPath = path.join(__dirname, '..', record.imagepath);
-      if (fs.existsSync(fullPath)) {
-        fs.unlinkSync(fullPath);
-        console.log(`Deleted file: ${fullPath}`);
-      }
+    // 📁 Step 3: Delete all 3 physical files (original, medium, thumb).
+    // A file error is logged but never turns a successful DB delete into a failure.
+    try {
+      imageService.deleteImageFiles(record.imagepath, record.imagepath_medium, record.imagepath_thumb);
+    } catch (fileErr) {
+      console.error('DeleteUserGalleryRecord file cleanup error:', fileErr.message);
     }
     
     return { 
@@ -288,15 +282,17 @@ const GetUserDetailsById = async (uid) => {
   }
 }
 
+const sib = (v) => (v === undefined || v === null || String(v).trim() === '' ? '0' : String(v).trim());
+
 const SaveUserDetails = async (obj) => {
  
   try {
     const client = await pool.connect();
 
     
-    const query = ` INSERT INTO userdetails ( uid, about, familyresidence, fathername, fatheroccupation, mothername, motheroccupation, brothers, sisters, brothersmarried, sistersmarried, nakshtra, padam, rasi, habitdrink, habitsmoke, degree, jobcity, diet, maritalstatus, partnerpreferences ) VALUES ( $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21 ) `
+    const query = ` INSERT INTO userdetails ( uid, about, familyresidence, fathername, fatheroccupation, mothername, motheroccupation, brothers, sisters, brothersmarried, sistersmarried, nakshtra, padam, rasi, habitdrink, habitsmoke, degree, jobcity, diet, maritalstatus, partnerpreferences, gothram ) VALUES ( $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22 ) `
 
-    const values = [obj.uid, obj.about, obj.familyResidence, obj.fatherName, obj.fatherOccupation, obj.motherName, obj.motherOccupation, obj.brothers, obj.sisters, obj.brothersMarried, obj.sistersMarried, obj.nakshtra, obj.padam, obj.rasi, obj.habitdrink, obj.habitsmoke, obj.degree, obj.jobCity, obj.diet, obj.maritalStatus, obj.partnerPreferences];
+    const values = [obj.uid, obj.about, obj.familyResidence, obj.fatherName, obj.fatherOccupation, obj.motherName, obj.motherOccupation, sib(obj.brothers), sib(obj.sisters), sib(obj.brothersMarried), sib(obj.sistersMarried), obj.nakshtra, obj.padam, obj.rasi, obj.habitdrink, obj.habitsmoke, obj.degree, obj.jobCity, obj.diet, obj.maritalStatus, obj.partnerPreferences, obj.gothram];
 
 
 
@@ -337,16 +333,17 @@ const UpdateUserDetails = async (obj) => {
       jobcity = $18, 
       diet = $19, 
       maritalstatus = $20, 
-      partnerpreferences = $21
+      partnerpreferences = $21,
+      gothram = $22
     WHERE 
       uid = $1
   `;
 
     const values = [
       obj.uid, obj.about, obj.familyResidence, obj.fatherName, obj.fatherOccupation, obj.motherName,
-      obj.motherOccupation, obj.brothers, obj.sisters, obj.brothersMarried, obj.sistersMarried,
+      obj.motherOccupation, sib(obj.brothers), sib(obj.sisters), sib(obj.brothersMarried), sib(obj.sistersMarried),
       obj.nakshtra, obj.padam, obj.rasi, obj.habitdrink, obj.habitsmoke, obj.degree, obj.jobCity,
-      obj.diet, obj.maritalStatus, obj.partnerPreferences
+      obj.diet, obj.maritalStatus, obj.partnerPreferences, obj.gothram
     ];
 
     // const query = 'update userdetails set ustate = $1, ucountry= $2 where uid=$3';
@@ -362,15 +359,91 @@ const UpdateUserDetails = async (obj) => {
     console.error('Error while saving objects to the database:', error);
   }
 }
+// Owner-only: set / clear the alternate phone (value already validated; null clears).
+const UpdateAltPhone = async (uid, altPhone) => {
+  const client = await pool.connect();
+  try {
+    const res = await client.query('UPDATE users SET ualtphone = $1 WHERE uid = $2', [altPhone, uid]);
+    return res.rowCount > 0;
+  } finally {
+    client.release();
+  }
+};
+// Saves the owner's userdetails row (insert or update) and, when altPhone !== undefined,
+// users.ualtphone in ONE transaction. `uid` is the authenticated user's id (never the body).
+// gothramProvided=false leaves the stored gothram unchanged on update (NULL on insert).
+// Resolves true on success; rolls back and rethrows on any error.
+// opts = { eduProvided, jobProvided, familyProvided, jobLocProvided }: false/omitted keeps the stored value
+// on update (NULL on insert). Values come from obj.educationDetail / jobDetail / familyCountry / familyState /
+// familyDistrict / jobCountry / jobState / jobDistrict (already validated by the controller). With
+// jobLocProvided, userdetails.jobcity is set to obj.jobCity ("City, State, Country" text or null);
+// otherwise the stored jobcity is kept.
+const SaveUserProfileTx = async (uid, obj, altPhone, gothramProvided, opts = {}) => {
+  const eduProvided = !!opts.eduProvided;
+  const jobProvided = !!opts.jobProvided;
+  const familyProvided = !!opts.familyProvided;
+  const jobLocProvided = !!opts.jobLocProvided;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const existing = await client.query('SELECT 1 FROM userdetails WHERE uid = $1', [uid]);
+    const common = [obj.about, obj.familyResidence, obj.fatherName, obj.fatherOccupation, obj.motherName, obj.motherOccupation, sib(obj.brothers), sib(obj.sisters), sib(obj.brothersMarried), sib(obj.sistersMarried), obj.nakshtra, obj.padam, obj.rasi, obj.habitdrink, obj.habitsmoke, obj.degree, obj.jobCity, obj.diet, obj.maritalStatus, obj.partnerPreferences];
+    if (existing.rowCount === 0) {
+      await client.query(
+        `INSERT INTO userdetails ( uid, about, familyresidence, fathername, fatheroccupation, mothername, motheroccupation, brothers, sisters, brothersmarried, sistersmarried, nakshtra, padam, rasi, habitdrink, habitsmoke, degree, jobcity, diet, maritalstatus, partnerpreferences, gothram, education_detail, job_detail, family_country, family_state, family_district, job_country, job_state, job_city ) VALUES ( $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30 )`,
+        [uid, ...common, gothramProvided ? obj.gothram : null,
+          eduProvided ? obj.educationDetail : null,
+          jobProvided ? obj.jobDetail : null,
+          familyProvided ? obj.familyCountry : null,
+          familyProvided ? obj.familyState : null,
+          familyProvided ? obj.familyDistrict : null,
+          jobLocProvided ? obj.jobCountry : null,
+          jobLocProvided ? obj.jobState : null,
+          jobLocProvided ? obj.jobDistrict : null]
+      );
+    } else {
+      await client.query(
+        `UPDATE userdetails SET about = $2, familyresidence = $3, fathername = $4, fatheroccupation = $5, mothername = $6, motheroccupation = $7, brothers = $8, sisters = $9, brothersmarried = $10, sistersmarried = $11, nakshtra = $12, padam = $13, rasi = $14, habitdrink = $15, habitsmoke = $16, degree = $17, jobcity = CASE WHEN $32::boolean THEN $18::varchar ELSE jobcity END, diet = $19, maritalstatus = $20, partnerpreferences = $21,
+           job_country = CASE WHEN $32::boolean THEN $33::varchar ELSE job_country END,
+           job_state = CASE WHEN $32::boolean THEN $34::varchar ELSE job_state END,
+           job_city = CASE WHEN $32::boolean THEN $35::varchar ELSE job_city END,
+           gothram = CASE WHEN $23::boolean THEN $22 ELSE gothram END,
+           education_detail = CASE WHEN $24::boolean THEN $25::varchar ELSE education_detail END,
+           job_detail = CASE WHEN $26::boolean THEN $27::varchar ELSE job_detail END,
+           family_country = CASE WHEN $28::boolean THEN $29::varchar ELSE family_country END,
+           family_state = CASE WHEN $28::boolean THEN $30::varchar ELSE family_state END,
+           family_district = CASE WHEN $28::boolean THEN $31::varchar ELSE family_district END
+         WHERE uid = $1`,
+        [uid, ...common, obj.gothram, gothramProvided,
+          eduProvided, obj.educationDetail ?? null,
+          jobProvided, obj.jobDetail ?? null,
+          familyProvided, obj.familyCountry ?? null, obj.familyState ?? null, obj.familyDistrict ?? null,
+          jobLocProvided, obj.jobCountry ?? null, obj.jobState ?? null, obj.jobDistrict ?? null]
+      );
+    }
+    if (altPhone !== undefined) {
+      await client.query('UPDATE users SET ualtphone = $1 WHERE uid = $2', [altPhone, uid]);
+    }
+    await client.query('COMMIT');
+    return true;
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+    throw error;
+  } finally {
+    client.release();
+  }
+};
 const FetchAllUserDetails = async (data) => {
   try {
     const client4 = await pool.connect();
 
     const query = {// join changed inner to LEFT
       text: `select
-  a.uid, a.relation,a.ucreated,a.ufname,a.ulname,a.udob,a.utob,a.ugender,a.upob,a.upresentloc,a.uphone,a.uheight,a.ucaste,a.uemail,a.upassword,a.ujob,a.upackage,a.ucountry,
-  a.ustate, b.uid,b.about,b.familyresidence,b.fathername,b.fatheroccupation,b.mothername,b.motheroccupation,b.brothers,b.sisters,b.brothersmarried,b.sistersmarried,b.nakshtra,
-  b.padam,b.rasi,b.habitdrink,b.habitsmoke,b.degree,b.jobcity,b.diet,b.maritalstatus,b.partnerpreferences 
+  a.uid, a.relation,a.ucreated,a.ufname,a.ulname,a.udob,a.utob,a.ugender,a.upob,a.upresentloc,a.uphone,a.ualtphone,a.uheight,a.ucaste,a.uemail,a.upassword,a.ujob,a.upackage,a.ucountry,
+  a.ustate, a.marriage_status, b.uid,b.about,b.familyresidence,b.fathername,b.fatheroccupation,b.mothername,b.motheroccupation,b.brothers,b.sisters,b.brothersmarried,b.sistersmarried,b.nakshtra,
+  b.padam,b.rasi,b.habitdrink,b.habitsmoke,b.degree,b.jobcity,b.diet,b.maritalstatus,b.partnerpreferences,b.gothram,
+  b.education_detail, b.job_detail, b.family_country, b.family_state, b.family_district,
+  b.job_country, b.job_state, b.job_city
   from users as a LEFT join userdetails as b on a.uid = b.uid where a.uid = $1`,
       values: [data],
     };
@@ -441,6 +514,9 @@ const Fetchlistdata = async ({
   occupation, 
   annualIncome,
   workingLocation,
+  membershipType,
+  withPhoto,
+  viewerUid = null,
   page = 1,
   limit = 20
 }) => {
@@ -497,9 +573,9 @@ const Fetchlistdata = async ({
     }
     
     if (heightTo !== undefined && heightTo !== null && String(heightTo).trim() !== '') {
-      const heightToInches = heightToInches(String(heightTo));
-      if (heightToInches !== null) {
-        params.push(heightToInches);
+      const heightToValueInches = heightToInches(String(heightTo));
+      if (heightToValueInches !== null) {
+        params.push(heightToValueInches);
         where += ` AND (
           CASE 
             WHEN a.uheight ~ '^\\d+''\\d*"?$' THEN 
@@ -512,17 +588,20 @@ const Fetchlistdata = async ({
     }
 
     // Location filters
+    // Stored values come in several shapes ('TS_Adilabad', 'Adilabad (TG)', 'Adilabad', 'AP').
+    // Both the column and the filter value are normalised, so anything that matched by exact
+    // equality before still matches (normalising both sides can only add matches).
     if (country && String(country).trim() !== '') {
-      params.push(country);
-      where += ` AND a.ucountry = $${params.length}`;
+      params.push(String(country).trim().toLowerCase());
+      where += ` AND lower(btrim(a.ucountry)) = $${params.length}`;
     }
     if (state && String(state).trim() !== '') {
-      params.push(state);
-      where += ` AND a.ustate = $${params.length}`;
+      params.push(stateFilterValues(state));
+      where += ` AND ${locNormSql('a.ustate')} = ANY($${params.length}::text[])`;
     }
     if (city && String(city).trim() !== '') {
-      params.push(city);
-      where += ` AND a.upresentloc = $${params.length}`;
+      params.push(normalizeLocName(city).toLowerCase());
+      where += ` AND ${locNormSql('a.upresentloc')} = $${params.length}`;
     }
 
     // Caste
@@ -568,7 +647,37 @@ const Fetchlistdata = async ({
     // Working Location
     if (workingLocation && String(workingLocation).trim() !== '') {
       params.push(workingLocation);
-      where += ` AND b.jobcity = $${params.length}`;
+      const wlExact = params.length;
+      const wlNames = jobLocationCandidates(workingLocation);
+      if (wlNames) {
+        // Old rows: exact jobcity (unchanged). New rows: job_country / job_state / job_city, with aliases.
+        params.push(wlNames);
+        const wlList = params.length;
+        where += ` AND (b.jobcity = $${wlExact} OR ${locNormSql('b.job_city')} = ANY($${wlList}::text[]) OR ${locNormSql('b.job_country')} = ANY($${wlList}::text[]) OR ${locNormSql('b.job_state')} = ANY($${wlList}::text[]))`;
+      } else {
+        where += ` AND b.jobcity = $${wlExact}`;
+      }
+    }
+
+    // "Only with pictures": an APPROVED profile photo exists and the member has
+    // not hidden it (same rule that decides whether profile_image is returned).
+    // No user input goes into this SQL. Count + data share this WHERE.
+    if (withPhoto === true || withPhoto === '1' || withPhoto === 1 || withPhoto === 'true') {
+      where += ` AND COALESCE(a.hide_picture, false) = false
+                 AND EXISTS (SELECT 1 FROM usergallery gp
+                              WHERE gp.uid = a.uid AND gp.isprofile = true AND gp.status = 'approved')`;
+    }
+
+    // Membership type (whitelisted; anything else is ignored). Count + data share this WHERE.
+    if (typeof membershipType === 'string' && ['Gold', 'Diamond', 'Premium'].includes(membershipType.trim())) {
+      params.push(membershipType.trim());
+      where += ` AND a.membership_type = $${params.length}`;
+    }
+
+    // Hide users who have blocked the viewer (count + data share this WHERE).
+    if (viewerUid != null) {
+      params.push(viewerUid);
+      where += ` AND ${blocks.notBlockedBySql('a.uid', `$${params.length}`)}`;
     }
 
     // Count query
@@ -585,6 +694,7 @@ const dataText = `
     a.uid, a.ucreated, a.ufname, a.ulname, a.udob, a.ugender, 
     a.uheight, a.ujob, a.upackage, a.upob, a.ucountry, a.ustate, 
     a.upresentloc, a.ucaste,
+    a.membership_type, a.marriage_status,
     b.about, b.degree, b.jobcity, b.maritalstatus, b.familyresidence,
     -- ✅ ADDED: Fetch profile images with privacy check
     (SELECT CASE WHEN a.hide_picture = true THEN NULL ELSE g.imagepath END FROM usergallery g WHERE g.uid = a.uid AND g.isprofile = true AND g.status = 'approved' LIMIT 1) AS profile_image,
@@ -619,12 +729,15 @@ const dataText = `
 };
 
 module.exports.Fetchlistdata = Fetchlistdata;
-const getAllUserDetails = async () => {
+const getAllUserDetails = async (viewerUid = null) => {
   try {
     const client3 = await pool.connect();
-    const query = {
-      text: 'select * from userdetails'
-    };
+    const query = viewerUid != null
+      ? {
+          text: `SELECT d.* FROM userdetails d WHERE ${blocks.notBlockedBySql('d.uid', '$1')}`,
+          values: [viewerUid]
+        }
+      : { text: 'select * from userdetails' };
     const res = await client3.query(query);
     // Close the connection
     client3.release(); // Use release() instead of end() to return the client to the pool
@@ -638,17 +751,26 @@ const UpdateUserRegistrationDetails = async (obj) => {
   try {
     const client = await pool.connect();
 
-    const query = 'update public.users set upob = $1, upresentloc= $2, uheight= $3, ucaste= $4, ujob= $5 , ucountry= $6, ustate= $7, upackage=$8 where uid=$9';
+    // Present location (city / country / state): key omitted (undefined) = keep the stored value.
+    const query = `update public.users set upob = $1,
+      upresentloc = CASE WHEN $10::boolean THEN $2::varchar ELSE upresentloc END,
+      uheight= $3, ucaste= $4, ujob= $5,
+      ucountry = CASE WHEN $11::boolean THEN $6::varchar ELSE ucountry END,
+      ustate = CASE WHEN $12::boolean THEN $7::varchar ELSE ustate END,
+      upackage=$8 where uid=$9`;
     const values = [
       obj.pob,
-      obj.city,
+      obj.city ?? null,
       obj.height,
       obj.caste,
       obj.profession,
-      obj.country,
-      obj.state,
+      obj.country ?? null,
+      obj.state ?? null,
       obj.package,
-      obj.uid
+      obj.uid,
+      obj.cityProvided === true,
+      obj.countryProvided === true,
+      obj.stateProvided === true
     ];
 
     const res = await client.query(query, values);
@@ -664,12 +786,18 @@ const UpdateUserRegistrationDetails = async (obj) => {
 
 
 // Function to update isprofile based on id
-const updateUserProfileStatus = async (id) => {
+const updateUserProfileStatus = async (id, ownerUid) => {
   try {
     const client = await pool.connect();
     // Check if isprofile is already true for the given id
-    const checkQuery = 'SELECT isprofile FROM public.usergallery WHERE id = $1';
+    const checkQuery = 'SELECT isprofile, uid FROM public.usergallery WHERE id = $1';
     const checkResult = await client.query(checkQuery, [id]);
+
+    // Only the photo's owner (token uid) may change it.
+    if (checkResult.rows.length > 0 && Number(checkResult.rows[0].uid) !== Number(ownerUid)) {
+      client.release();
+      return { success: false, forbidden: true, message: 'Not allowed.' };
+    }
 
     if (checkResult.rows.length > 0 && checkResult.rows[0].isprofile === true) {
       client.release();
@@ -698,7 +826,7 @@ const getPublicProfile = async (uid) => {  //added this public funtion 1
       `SELECT 
         a.uid, a.ufname, a.ulname, a.udob, a.ugender,
         a.uheight, a.ucaste, a.ujob, a.upackage,
-        a.upresentloc, a.ustate, a.ucountry,
+        a.upresentloc, a.ustate, a.ucountry, a.marriage_status,
         b.about, b.degree, b.maritalstatus,
         (SELECT g.imagepath FROM usergallery g 
          WHERE g.uid = a.uid AND g.isprofile = true 
@@ -890,7 +1018,7 @@ const getUserMobile = async (uid) => {
   const client = await pool.connect();
   try {
     const result = await client.query(
-      `SELECT uid, uphone, uemail, hide_phone, hide_email FROM users WHERE uid = $1`,
+      `SELECT uid, uphone, ualtphone, uemail, hide_phone, hide_email, payment_status, membership_type, marriage_status FROM users WHERE uid = $1`,
       [uid]
     );
     return result.rows[0] || null;
@@ -1086,6 +1214,8 @@ module.exports.DeleteUserGalleryRecord = DeleteUserGalleryRecord;
 module.exports.GetUserDetailsById = GetUserDetailsById;
 module.exports.SaveUserDetails = SaveUserDetails;
 module.exports.UpdateUserDetails = UpdateUserDetails;
+module.exports.UpdateAltPhone = UpdateAltPhone;
+module.exports.SaveUserProfileTx = SaveUserProfileTx;
 module.exports.FetchAllUserDetails = FetchAllUserDetails;
 module.exports.Fetchlistdata = Fetchlistdata
 module.exports.getAllUserDetails = getAllUserDetails
